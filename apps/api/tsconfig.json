@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Typecheck only, exactly as every package does: workspace `paths` resolve into
+    // sibling `src` trees, and declaring `rootDir`/`outDir` here makes tsc infer a
+    // root that rejects them. `tsconfig.build.json` owns emit.
+    "noEmit": true,
+    // NestJS resolves a constructor parameter by the token on its `@Inject`, and this
+    // app puts one on every parameter (see `src/tokens.ts`) precisely so it never
+    // depends on `design:paramtypes`. esbuild - which Vitest transforms with - cannot
+    // emit decorator metadata, so a wiring that needed it would typecheck and then
+    // fail at the first request under test.
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}
