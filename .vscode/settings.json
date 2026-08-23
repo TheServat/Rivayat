@@ -1,0 +1,76 @@
+{
+  // ─── Formatting ────────────────────────────────────────────────────────────
+  // Prettier owns formatting; ESLint owns correctness. They are kept from
+  // fighting by `eslint-config-prettier` at the end of eslint.config.js.
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": false,
+  "editor.codeActionsOnSave": {
+    // "explicit" = run on an explicit save only, never on autosave — an
+    // organise-imports pass mid-thought is worse than useless.
+    "source.fixAll.eslint": "explicit"
+  },
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "[markdown]": {
+    // Markdown keeps two-space hard line breaks.
+    "files.trimTrailingWhitespace": false
+  },
+
+  // ─── ESLint (flat config, ESLint 10) ───────────────────────────────────────
+  "eslint.useFlatConfig": true,
+  "eslint.validate": ["javascript", "typescript", "typescriptreact", "vue"],
+  "eslint.workingDirectories": [{ "mode": "auto" }],
+  // Type-aware rules need the project service; give the server room.
+  "eslint.runtime": "node",
+
+  // ─── TypeScript ────────────────────────────────────────────────────────────
+  // Use the workspace compiler (6.0.3, ADR-0005), not whatever VS Code bundles.
+  // Otherwise the editor and CI disagree about your code.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "typescript.preferences.preferTypeOnlyAutoImports": true,
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "typescript.tsserver.maxTsServerMemory": 6144,
+  "javascript.preferences.importModuleSpecifier": "non-relative",
+
+  // ─── Vitest ────────────────────────────────────────────────────────────────
+  // Root config declares `projects`, so the explorer discovers every package.
+  "vitest.rootConfig": "./vitest.config.ts",
+  "vitest.disableWorkspaceWarning": true,
+
+  // ─── Search / watcher noise ────────────────────────────────────────────────
+  // `workspace/` is runtime data: the content-addressed asset store and render
+  // output. Indexing it will bring the editor down.
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/dist/**": true,
+    "**/.turbo/**": true,
+    "**/coverage/**": true,
+    "**/workspace/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/.turbo": true,
+    "**/coverage": true,
+    "**/workspace": true,
+    "**/pnpm-lock.yaml": true
+  },
+  "files.exclude": {
+    "**/.turbo": true
+  },
+
+  // ─── Misc ──────────────────────────────────────────────────────────────────
+  "editor.rulers": [100],
+  "npm.packageManager": "pnpm",
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.patterns": {
+    "*.ts": "${capture}.spec.ts",
+    "package.json": "pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc, turbo.json",
+    "tsconfig.base.json": "tsconfig.*.json",
+    "README.md": "CLAUDE.md, LICENSE*, .editorconfig, .nvmrc, docker-compose.yml"
+  }
+}

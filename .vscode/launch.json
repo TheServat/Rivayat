@@ -1,0 +1,82 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Run the NestJS API in-process under the debugger, straight from
+      // TypeScript source via tsx — no build step, so breakpoints map to the
+      // files you are editing.
+      //
+      // Requires apps/api to exist. It does not yet; this is the target shape.
+      "name": "Debug API",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/apps/api",
+      "program": "${workspaceFolder}/apps/api/src/main.ts",
+      "runtimeArgs": ["--import", "tsx"],
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "NODE_ENV": "development",
+        // Debug the pipeline in-process: no Redis, no worker subprocess, one
+        // call stack from the HTTP request to the provider adapter.
+        "REDIS_URL": ""
+      },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "sourceMaps": true,
+      "restart": true
+    },
+    {
+      // For when the API is already running (`pnpm dev`) and you want to attach
+      // rather than restart it. Start it with `node --inspect` / `nest start --debug`.
+      "name": "Attach to API",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "${workspaceFolder}",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Run only the spec file in the active editor, in-band so breakpoints in
+      // both the test and the code under test are hit.
+      "name": "Debug current Vitest file",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
+      "args": ["run", "--no-file-parallelism", "${relativeFile}"],
+      "autoAttachChildProcesses": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "smartStep": true
+    },
+    {
+      // The whole suite, same as `pnpm test`, under the debugger.
+      "name": "Debug all Vitest tests",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
+      "args": ["run", "--no-file-parallelism"],
+      "autoAttachChildProcesses": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "smartStep": true
+    },
+    {
+      // Drive a pipeline stage head-lessly. Pass the command after `--`, e.g.
+      // args: ["render", "--project", "demo"].
+      "name": "Debug CLI",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/apps/cli/src/main.ts",
+      "runtimeArgs": ["--import", "tsx"],
+      "args": [],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+# https://editorconfig.org
+# The whitespace baseline for editors that are not running Prettier. Prettier
+# is still the formatter of record — these values match .prettierrc.json so the
+# two never fight.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 100
+
+[*.md]
+# Two trailing spaces are a hard line break in Markdown.
+trim_trailing_whitespace = false
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.{bat,cmd}]
+# Windows batch files break if the interpreter sees LF.
+end_of_line = crlf
+
+[Makefile]
+indent_style = tab
+
+[{*.sh,.husky/*}]
+end_of_line = lf

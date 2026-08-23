@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Typecheck only. tsup owns emit, so no `outDir`/`rootDir` here - specifying them
+    // makes tsc infer a rootDir and reject the sibling `src` trees that workspace
+    // `paths` resolve into.
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

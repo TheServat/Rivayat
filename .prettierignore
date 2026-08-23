@@ -1,0 +1,13 @@
+node_modules
+dist
+build
+coverage
+.turbo
+workspace
+vendor
+docs/generated
+pnpm-lock.yaml
+*.min.*
+
+# Agent prompt files: hand-wrapped prose where the line breaks are the point.
+.claude

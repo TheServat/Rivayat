@@ -1,0 +1,38 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# Runtime data: projects, the content-addressed asset library, caches, renders.
+workspace/
+!workspace/.gitkeep
+
+# Local model weights / vendored tools (multi-GB)
+vendor/
+models/
+*.safetensors
+*.ckpt
+*.onnx
+*.gguf
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test/render artifacts
+playwright-report/
+test-results/
+__snapshots__/*.actual.png
+docs/generated/

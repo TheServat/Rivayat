@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same ref makes the previous run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Deterministic, non-interactive, and no telemetry chatter in the logs.
+  CI: 'true'
+  NODE_ENV: test
+  TURBO_TELEMETRY_DISABLED: '1'
+  DO_NOT_TRACK: '1'
+  # No provider keys in CI. Adapters must fall back to recorded fixtures;
+  # a test that needs the network is a broken test.
+  REDIS_URL: ''
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # verify: the exact five steps of `pnpm verify`, split so a failure is
+  # attributable to one of them rather than to "the script".
+  #   package.json: "verify": "format:check && lint && typecheck && arch:check && test"
+  # The drift guard below fails the build if that chain changes without this
+  # workflow changing with it.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        # Provides the `pnpm` shim before setup-node looks for it to resolve the
+        # store path for caching.
+        run: corepack enable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Activate the pinned pnpm
+        # No version here on purpose: `corepack prepare --activate` with no spec
+        # reads `packageManager` from package.json, so pnpm's version has exactly
+        # one source of truth.
+        run: |
+          corepack prepare --activate
+          echo "node: $(node --version)"
+          echo "pnpm: $(pnpm --version)"
+
+      - name: Guard against CI/verify drift
+        run: |
+          expected='pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run arch:check && pnpm run test'
+          actual=$(node -p "require('./package.json').scripts.verify")
+          if [ "$actual" != "$expected" ]; then
+            echo "::error file=package.json::pnpm verify changed but .github/workflows/ci.yml did not."
+            echo "  expected: $expected"
+            echo "  actual:   $actual"
+            exit 1
+          fi
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # --- the five steps of `pnpm verify`, in order -------------------------
+
+      - name: format:check
+        run: pnpm run format:check
+
+      - name: lint
+        run: pnpm run lint
+
+      - name: typecheck
+        run: pnpm run typecheck
+
+      - name: arch:check
+        run: pnpm run arch:check
+
+      - name: test
+        run: pnpm run test
+
+      # --- extra: coverage ---------------------------------------------------
+      # Deliberately a separate step, not a replacement for `test`. `test:cov`
+      # additionally enforces the thresholds in vitest.config.ts, so folding it
+      # into the step above would make CI stricter than local `pnpm verify` —
+      # the drift this job exists to prevent. Keeping it separate means a
+      # coverage failure is reported as a coverage failure.
+      - name: Coverage
+        run: pnpm run test:cov
+
+      - name: Upload coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage/
+            packages/*/coverage/
+            apps/*/coverage/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # build: separate job. `pnpm verify` does not build, so a broken tsup/dts
+  # config must not hide behind a green verify.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Activate the pinned pnpm
+        run: corepack prepare --activate
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build

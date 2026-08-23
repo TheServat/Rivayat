@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": false,
+    "useUnknownInCatchVariables": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": false,
+    "importHelpers": false,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    // tsup 8.5.1 hard-injects `baseUrl: "."` into the compiler options for its dts
+    // pass (rollup.js:6837). TS 6 errors on `baseUrl` (TS5101) unless deprecations
+    // are acknowledged. We declare no `baseUrl` ourselves; this only tolerates tsup's.
+    "ignoreDeprecations": "6.0",
+
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "types": ["node"],
+    // No `baseUrl`: deprecated in TS 6, removed in TS 7. Since TS 4.4 `paths` resolves
+    // relative to the file that declares it, which is what we want anyway.
+    "paths": {
+      "@rv/shared-kernel": ["./packages/shared-kernel/src/index.ts"],
+      "@rv/contracts": ["./packages/contracts/src/index.ts"],
+      "@rv/core-domain": ["./packages/core-domain/src/index.ts"],
+      "@rv/prompt-kit": ["./packages/prompt-kit/src/index.ts"],
+      "@rv/narrative-memory": ["./packages/narrative-memory/src/index.ts"],
+      "@rv/providers": ["./packages/providers/src/index.ts"],
+      "@rv/asset-registry": ["./packages/asset-registry/src/index.ts"],
+      "@rv/style-engine": ["./packages/style-engine/src/index.ts"],
+      "@rv/story-engine": ["./packages/story-engine/src/index.ts"],
+      "@rv/asset-engine": ["./packages/asset-engine/src/index.ts"],
+      "@rv/anim-engine": ["./packages/anim-engine/src/index.ts"],
+      "@rv/render-engine": ["./packages/render-engine/src/index.ts"],
+      "@rv/export-kit": ["./packages/export-kit/src/index.ts"],
+      "@rv/persistence": ["./packages/persistence/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "dist", "coverage", ".turbo"]
+}

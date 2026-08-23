@@ -1,0 +1,48 @@
+{
+  "name": "@rv/persistence",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Infrastructure: SQLite + Drizzle metadata store, the content-addressed blob store, and the repository adapters behind the application-layer ports.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src/migrations"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "clean": "rimraf dist .turbo"
+  },
+  "dependencies": {
+    "@rv/shared-kernel": "workspace:*",
+    "@rv/contracts": "workspace:*",
+    "@rv/asset-registry": "workspace:*",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.2",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "catalog:",
+    "drizzle-kit": "0.31.10",
+    "rimraf": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

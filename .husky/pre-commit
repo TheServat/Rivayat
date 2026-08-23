@@ -1,0 +1,3 @@
+# Formats and lints only what is staged. The full gate is `pnpm verify`;
+# this is the fast half that stops obviously broken code reaching a commit.
+pnpm exec lint-staged

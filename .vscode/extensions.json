@@ -1,0 +1,31 @@
+{
+  "recommendations": [
+    // Formatting and linting — these two own the file on save.
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "editorconfig.editorconfig",
+
+    // Vue 3 SFC language support (Volar). Do NOT also install Vetur.
+    "vue.volar",
+
+    // Run and debug Vitest from the gutter; mirrors `pnpm test`.
+    "vitest.explorer",
+
+    // Inspect workspace/rivayat.db without leaving the editor (ADR-0006).
+    "qwtel.sqlite-viewer",
+
+    // Docs and repo plumbing.
+    "davidanson.vscode-markdownlint",
+    "redhat.vscode-yaml",
+    "github.vscode-github-actions",
+
+    // Drizzle migrations and ad-hoc SQL.
+    "mtxr.sqltools"
+  ],
+  "unwantedRecommendations": [
+    // Superseded by Volar; running both breaks Vue tooling.
+    "octref.vetur",
+    // Superseded by the built-in TS/JS language features + ESLint.
+    "hookyqr.beautify"
+  ]
+}

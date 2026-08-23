@@ -1,0 +1,88 @@
+# Rivayat — optional local services.
+#
+# Nothing here is required. Rivayat is local-first and zero-ops by design
+# (ADR-0006): SQLite for metadata, a content-addressed directory for binaries,
+# and — with `REDIS_URL` empty in `.env` — an in-process queue instead of BullMQ.
+# `pnpm dev` works with none of this running.
+#
+# Bring Redis up only when you want the real BullMQ path: multiple workers,
+# retries and backoff that survive a restart, and a queue you can inspect.
+#
+#   docker compose up -d redis      # start
+#   docker compose ps               # check health
+#   docker compose down             # stop, keep data
+#   docker compose down -v          # stop, discard data
+#
+# Then set in .env:  REDIS_URL=redis://127.0.0.1:6379
+#
+# The app itself is deliberately NOT containerised. It needs FFmpeg, optionally
+# a GPU for local ComfyUI, and a writable workspace on the host; a container
+# would add friction without buying anything on a single dev machine.
+
+services:
+  redis:
+    image: redis:8-alpine
+    container_name: rivayat-redis
+    restart: unless-stopped
+    ports:
+      # Bound to loopback: this is a dev dependency, not a network service.
+      - '127.0.0.1:6379:6379'
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      # BullMQ requires noeviction. Under any eviction policy Redis may drop
+      # job keys while a job is in flight, which silently loses work.
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      # `redis-cli ping` returns PONG only once the server is accepting commands,
+      # so dependents using `condition: service_healthy` wait for readiness, not
+      # merely for the container to exist.
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # Postgres — the documented future swap (ADR-0006).
+  #
+  # Metadata access goes through `interface XRepository` in the application
+  # layer, so moving off SQLite is: add a `drizzle-orm/pg-core` schema, add
+  # `Pg<Aggregate>Repository` implementations, and point RV_DB_URL at a
+  # `postgres://` URL. No use-case, entity or engine changes.
+  #
+  # Uncomment, then set in .env:
+  #   RV_DB_URL=postgres://rivayat:rivayat@127.0.0.1:5432/rivayat
+  #
+  # Binaries stay in the content-addressed filesystem store either way; only
+  # metadata moves. (An object-store adapter is a separate swap behind
+  # `ContentStore`.)
+  # ---------------------------------------------------------------------------
+  # postgres:
+  #   image: postgres:18-alpine
+  #   container_name: rivayat-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: rivayat
+  #     POSTGRES_PASSWORD: rivayat # local only; the real one belongs in .env
+  #     POSTGRES_DB: rivayat
+  #     # Deterministic collation, so index ordering does not drift between machines.
+  #     POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=und-x-icu'
+  #   ports:
+  #     - '127.0.0.1:5432:5432'
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ['CMD-SHELL', 'pg_isready -U rivayat -d rivayat']
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 10
+  #     start_period: 10s
+
+volumes:
+  redis-data:
+  # postgres-data:
