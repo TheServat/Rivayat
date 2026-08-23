@@ -44,18 +44,41 @@ milestone demos name roughly twenty.
 - [x] `vitest.config.ts` — the package had none, so `vitest run` resolved the root
       workspace, matched no project, and failed at startup. A recursive `pnpm test`
       stopped there and never reached `apps/api`.
-- [ ] **Tests.** The CLI is the only package with zero. Its `test` script is red on
-      purpose until they exist, rather than green by way of `passWithNoTests`.
-- [ ] `project new` · `models list|set` · `style list|probe|lock` · `cost report`
-- [ ] `story new` · `cast states` · `graph show` · `continuity check`
-- [ ] `assets plan|bake|edit` · `anim lint`
+- [~] **Tests.** The CLI is the only package with zero. Its `test` script is red on
+  purpose until they exist, rather than green by way of `passWithNoTests`.
+- [~] `project new` · `models list|set` · `style list|probe|lock` · `cost report`
+- [~] `story new` · `cast states` · `graph show` · `continuity check`
+- [~] `assets plan|bake|edit` · `anim lint`
 - [ ] `run` · `render|render resume` · `deliver` · `series cost`
 
 ## W3 — Asset production chain (Epic G)
 
-- [~] `ProduceAssetsUseCase`: generate → matte → split parts → rig → clips → sheet →
-  register, run live against ComfyUI — in flight
-- [ ] Second run over the same episode costs exactly `$0` (the cache-hit proof)
+- [x] `ProduceAssetsUseCase`: plan, budget, then per asset generate -> matte -> split ->
+      score -> rig -> clips -> bake -> register. Ran live: three assets, 8.5 s, $0.0000
+      actually spent against a $0.0180 estimate
+- [x] Resolve first, spend second - the budget guard sees the batch total before the
+      first image is requested, and an unapproved batch returns the estimate with zero
+      provider calls
+- [x] Resumable per `(runId, assetKey, step, attempt)`; a stale input hash is ignored,
+      and a checkpoint whose record has vanished re-runs rather than half-resuming
+- [x] Partial success, cancellation and per-step metering are first-class outcomes
+- [x] Second run over the same episode: two cache hits and one resumed generate, 5 ms
+      instead of 5.7 s, zero provider calls
+- [x] The composed prompt was diluting its own layout instruction. SD 1.5 conditions on
+      CLIP-L at 77 tokens and ComfyUI concatenates about six windows, so ~1000
+      characters of style preamble ahead of the layout clause did not truncate it, it
+      buried it. Declared per lane now
+- [~] **BiRefNet is built and unwired.** One asset fails at matte every run: SD 1.5
+  draws it on a graded, vignetted backdrop and threshold keying cannot cut a
+  gradient. Both engines refuse it correctly. In flight
+- [~] **The best graph in the repo is unreachable.** `txt2img-lcm-parts-sheet.json`
+  carries the separability scaffold _and_ its negatives, and standalone it produced
+  a clean six-component sheet - but `ComfyWorkflowSet` has no slot that can route to
+  it. In flight
+- [~] **The quality gate is correct and unusable on this card.** It caught a 2x2 contact
+  sheet of photographs that the splitter, assigner and rigger had all happily turned
+  into four bones - at 44 s and 21 s per image under VRAM contention, while the
+  18 GB default OOMs outright beside ComfyUI. In flight
 - [ ] Regeneration requires explicit intent and appends a version
 - [ ] Edit-by-instruction produces a variant with the original intact
 
@@ -63,23 +86,29 @@ milestone demos name roughly twenty.
 
 All twelve stages report as implemented. What is not proven:
 
-- [ ] Checkpoint and **resume a killed render to a byte-identical result**
-- [ ] Run cancellation distinguishable from failure — see the `runs.state` gap below
-- [ ] SSE run events consumed by the UI, not just emitted
-- [ ] Cost ledger per run, per stage, per provider, surfaced in the UI
+- [~] Checkpoint and **resume a killed render to a byte-identical result**
+- [~] Run cancellation distinguishable from failure — see the `runs.state` gap below
+- [~] SSE run events consumed by the UI, not just emitted
+- [~] Cost ledger per run, per stage, per provider, surfaced in the UI
 
 ## W5 — Known contract and storage gaps
 
 Reported by the agents that hit them, deferred at the time, still open.
 
-- [ ] No `Project` schema in `contracts` — the API's most-used resource is the one
-      resource with no shared type
-- [ ] `runs.state` has five states; the pipeline has six. Cancelled and failed
-      collapse into one, which is exactly the distinction W4 needs
-- [ ] `persistence` calls its table `facts` but stores beliefs. Rename to `beliefs`
-      and add a real `facts` table
-- [ ] Pixel arithmetic is duplicated between `asset-engine` and `export-kit`
+- [~] No `Project` schema in `contracts` — the API's most-used resource is the one
+  resource with no shared type
+- [~] `runs.state` has five states; the pipeline has six. Cancelled and failed
+  collapse into one, which is exactly the distinction W4 needs
+- [~] `persistence` calls its table `facts` but stores beliefs. Rename to `beliefs`
+  and add a real `facts` table
+- [~] Pixel arithmetic is duplicated between `asset-engine` and `export-kit`
 - [ ] `export-kit` has no backlog story (parked as P-03)
+- [~] The settings wire envelope is maintained by hand in two places, `apps/api` and
+  `apps/web` - the same drift that produced the original mismatch
+- [~] No `projects`, `series`, checkpoint or render-artifact table; JSON files and a
+  `jobs` row are standing in
+- [~] `PipelineRun.checkpoints` holds one entry per stage, right for twelve stages and
+  useless for 40 assets x 8 steps
 
 ## W6 — Cross-engine seams (QA)
 
@@ -91,9 +120,9 @@ Reported by the agents that hit them, deferred at the time, still open.
 - [x] Flaky provider test: an abort-latency assertion budgeted 100 ms of wall clock and
       lost under four-way workspace concurrency. Rebudgeted to 400 ms — still below the
       500 ms `initialBackoffMs` floor it exists to catch, so the property is intact
-- [ ] CI: GitHub Actions running `pnpm verify`, `arch:check`, coverage floors and the
-      determinism scan
-- [ ] Coverage thresholds enforced rather than observed
+- [~] CI: GitHub Actions running `pnpm verify`, `arch:check`, coverage floors and the
+  determinism scan
+- [~] Coverage thresholds enforced rather than observed
 
 ## W8 — The proof
 
