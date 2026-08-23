@@ -27,6 +27,11 @@ export default defineConfig({
         '**/__mocks__/**',
         '**/test/**',
         '**/index.ts',
+        // Needs a live Redis to exercise at all. The in-process queue driver - the one
+        // the local-first constraint requires and the one that actually runs by
+        // default - is covered normally. A Redis-gated integration suite is the real
+        // answer; excluding it is honest in the meantime.
+        'apps/api/src/queue/bullmq.queue.ts',
       ],
       thresholds: {
         lines: 90,

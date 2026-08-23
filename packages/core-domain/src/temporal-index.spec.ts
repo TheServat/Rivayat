@@ -205,9 +205,42 @@ describe('the epistemic layer - who knows what', () => {
     expect(index.couldKnow(CAST.village, publicFact)).toBe(true);
   });
 
-  it('lets the participants act on a secret they are part of', () => {
-    expect(index.couldKnow(CAST.aria, truth)).toBe(true);
-    expect(index.couldKnow(CAST.kael, truth)).toBe(true);
+  it('lets the subject of a secret act on it, but not its object', () => {
+    // `truth` is (Aria) -parent-of-> (Kael), secret. Aria knows she is the mother.
+    // Kael is the *object*, and is exactly the character the secret is kept from -
+    // treating him as a participant made the rule answer "yes" for the single fact
+    // the epistemic layer exists to withhold.
+    expect(index.couldKnow(CAST.aria, truth, { storyAt: E05 })).toBe(true);
+    expect(index.couldKnow(CAST.kael, truth, { storyAt: E05 })).toBe(false);
+  });
+
+  it('lets the object act on it once the story has told him', () => {
+    // The question is meaningless without a standpoint: at E05 Kael has only a false
+    // belief, and at E09 he has a `knows` edge reaching Aria. Same fact, same
+    // character, opposite answers - which is the entire point of the temporal graph.
+    expect(index.couldKnow(CAST.kael, truth, { storyAt: t(900) })).toBe(true);
+  });
+
+  it('still treats both participants of a non-secret fact as knowing it', () => {
+    // A private marriage is not a secret from the spouses.
+    const marriage = relation({
+      from: CAST.aria,
+      to: CAST.mentor,
+      type: 'spouse-of',
+      visibility: 'private',
+    });
+    const withMarriage = new BiTemporalIndex([marriage]);
+    expect(withMarriage.couldKnow(CAST.mentor, marriage)).toBe(true);
+  });
+
+  it('lets the object of a secret act on it when being told is the whole relation', () => {
+    const confided = relation({
+      from: CAST.aria,
+      to: CAST.kael,
+      type: 'told',
+      visibility: 'secret',
+    });
+    expect(new BiTemporalIndex([confided]).couldKnow(CAST.kael, confided)).toBe(true);
   });
 
   it('stops a bystander acting on a secret they were never told', () => {

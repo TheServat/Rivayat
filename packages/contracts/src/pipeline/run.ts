@@ -1,4 +1,4 @@
-/**
+﻿/**
  * `PipelineRun` - one execution of the pipeline over one episode, and what it needs to
  * be picked up again after it stops.
  *
@@ -8,7 +8,7 @@
  * "can this run be resumed, and from where?" - because the answer lives in the payload,
  * unvalidated, in whatever shape the last writer chose.
  *
- * Architecture §4 demands four properties of every stage: idempotent, cached,
+ * Architecture Â§4 demands four properties of every stage: idempotent, cached,
  * resumable, cancellable. Three of them need durable state that the queue does not
  * have, and this file is that state:
  *
@@ -38,11 +38,11 @@ import {
   PIPELINE_STAGES,
   PipelineStage,
   PipelineStatus,
-  isTerminalStatus,
+  isStoppedStatus,
   pipelineStageIndex,
 } from './stage';
 
-// ── the resume point ────────────────────────────────────────────────────────
+// â”€â”€ the resume point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * One finished stage, recorded so the next run does not repeat it.
@@ -52,7 +52,7 @@ import {
  * the same thing, and where is what it produced. Drop `inputHash` and a resumed run
  * happily skips a stage whose inputs the author edited in between - which is exactly
  * the "editing re-runs only the downstream stages that depend on it" promise in
- * architecture §4, broken silently and in the direction nobody checks.
+ * architecture Â§4, broken silently and in the direction nobody checks.
  *
  * `costNanoUsd` is here rather than only in the ledger because a resumed run has to
  * report what the *whole* run cost, including the part it did not re-run, and summing
@@ -80,7 +80,7 @@ export const StageCheckpoint = z.strictObject({
 });
 export type StageCheckpoint = z.infer<typeof StageCheckpoint>;
 
-// ── failure ─────────────────────────────────────────────────────────────────
+// â”€â”€ failure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Why a run stopped, in the form the person who has to fix it needs.
@@ -100,7 +100,7 @@ export const PipelineError = z.strictObject({
 });
 export type PipelineError = z.infer<typeof PipelineError>;
 
-// ── the run ─────────────────────────────────────────────────────────────────
+// â”€â”€ the run â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * One execution of some or all of the pipeline.
@@ -170,10 +170,18 @@ export const PipelineRun = z
     // description is all the caller filling this in ever reads. An out-of-order list is
     // not a scheduling preference - it is two mutually exclusive claims about what the
     // pipeline is - and a repeated stage silently doubles that stage's cost estimate.
-    const positions = run.requestedStages.map(pipelineStageIndex);
-    if (
-      positions.some((position, index) => index > 0 && position <= (positions[index - 1] ?? -1))
-    ) {
+    //
+    // Written as a fold over the previous position rather than as an indexed lookup:
+    // `positions[i - 1]` is `number | undefined` under `noUncheckedIndexedAccess`, and
+    // the `?? fallback` that satisfies it is a branch no input can ever take.
+    let previous = -1;
+    let ordered = true;
+    for (const stage of run.requestedStages) {
+      const position = pipelineStageIndex(stage);
+      if (position <= previous) ordered = false;
+      previous = position;
+    }
+    if (!ordered) {
       ctx.addIssue({
         code: 'custom',
         path: ['requestedStages'],
@@ -222,7 +230,7 @@ export const PipelineRun = z
         message: 'a failed run must say what failed and where',
       });
     }
-    if (isTerminalStatus(run.status) && run.finishedAt === null) {
+    if (isStoppedStatus(run.status) && run.finishedAt === null) {
       ctx.addIssue({
         code: 'custom',
         path: ['finishedAt'],

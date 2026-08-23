@@ -72,8 +72,10 @@ function breathe(b: Extract<Behaviour, { kind: 'breathe' }>, ctx: BehaviourConte
  */
 function blink(b: Extract<Behaviour, { kind: 'blink' }>, ctx: BehaviourContext): ChannelDeltas {
   const slot = Math.floor(ctx.timeMs / b.intervalMs);
-  // Check this slot and the previous one: a blink jittered late can still be open.
-  for (const index of [slot, slot - 1]) {
+  // Three slots, not one. Jitter can move a blink up to `varianceMs` in either
+  // direction, so slot n's blink may begin inside slot n-1 or run into slot n+1.
+  // Checking only the current slot silently drops roughly half of them.
+  for (const index of [slot + 1, slot, slot - 1]) {
     if (index < 0) continue;
     const jitter = signedNoise1d(b.seed, index * 7.13) * b.varianceMs;
     const startMs = index * b.intervalMs + jitter;
@@ -110,7 +112,10 @@ function walkCycle(
   const bounce = Math.abs(Math.sin(stepPhase * Math.PI)) * b.bounce * 8;
   const lean = GAIT_LEAN[b.gait];
   // A limp is a gait, not a bug: asymmetry between the two halves of the stride.
-  const limpBias = b.gait === 'limp' ? Math.sin(stepPhase * Math.PI * 0.5) * 3 : 0;
+  // Period 2 in stride phase, and antisymmetric: one leg carries more than the other.
+  // At PI/2 the two half-strides evaluate identically, which is a symmetric limp -
+  // that is to say, not a limp.
+  const limpBias = b.gait === 'limp' ? Math.sin(stepPhase * Math.PI) * 3 : 0;
 
   return {
     'position.y': -bounce,

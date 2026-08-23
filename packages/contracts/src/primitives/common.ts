@@ -238,9 +238,15 @@ export type EmbeddingModel = z.infer<typeof EmbeddingModel>;
 /**
  * The vector and its model, as one shape fragment.
  *
- * Spread into anything that is semantically searchable. A fragment rather than a nested
- * object because storage wants two flat columns (`embedding`, `embedding_model`) and a
- * nested document would have to be shredded on every write.
+ * Spread into anything that is semantically searchable - `Asset` and `Fact` today. A
+ * fragment rather than a nested object because storage wants two flat columns
+ * (`embedding`, `embedding_model`) and a nested document would have to be shredded on
+ * every write.
+ *
+ * `EntityEnvelope` predates this and still carries a bare `embedding` with no model
+ * beside it, which has exactly the defect described above; it should adopt this
+ * fragment, and until it does its vectors are only safe while nobody changes the
+ * embedder.
  *
  * Both are optional, and absent is the honest encoding of "never indexed": an asset or
  * a fact exists the moment it is written and is embedded afterwards, by a separate pass

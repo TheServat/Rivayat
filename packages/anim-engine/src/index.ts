@@ -7,7 +7,7 @@
  */
 
 export type { EvaluateOptions } from './evaluate';
-export { evaluate, orderParentFirst } from './evaluate';
+export { DEFAULT_EASINGS, evaluate, orderParentFirst } from './evaluate';
 
 export type { EasingLibrary } from './easing';
 export {

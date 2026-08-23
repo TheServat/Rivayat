@@ -328,6 +328,47 @@ describe('Asset', () => {
   it('requires at least one version', () => {
     expect(Asset.safeParse(asset({ versions: [] })).success).toBe(false);
   });
+
+  // ── the semantic index is domain data, not a storage detail ──
+  //
+  // "A gnarled old tree" has to find `flora/oak-tree/mature` *before* anything decides
+  // to generate one. That lookup is the mechanism behind non-negotiable #2, so the
+  // vector belongs on the asset rather than in a column storage invented for itself.
+
+  it('carries a vector and the model that produced it', () => {
+    const parsed = Asset.parse(
+      asset({ embedding: [0.4, -0.1, 0.9], embeddingModel: 'ollama:nomic-embed-text' }),
+    );
+    expect(parsed.embedding).toEqual([0.4, -0.1, 0.9]);
+    expect(parsed.embeddingModel).toBe('ollama:nomic-embed-text');
+  });
+
+  it('leaves both absent until the indexing pass has run, which is a real state', () => {
+    const parsed = Asset.parse(asset());
+    expect(parsed.embedding).toBeUndefined();
+    expect(parsed.embeddingModel).toBeUndefined();
+  });
+
+  it('refuses a vector nobody can attribute', () => {
+    // Vectors from two models are not comparable. Mixing them does not fail - it
+    // degrades recall, silently, months after someone swapped the embedder.
+    const result = Asset.safeParse(asset({ embedding: [0.4, -0.1] }));
+    expect(result.success).toBe(false);
+    expect(z.prettifyError(result.error!)).toMatch(/must name the model/);
+  });
+
+  it('refuses a model with no vector, which claims an index entry that does not exist', () => {
+    const result = Asset.safeParse(asset({ embeddingModel: 'ollama:nomic-embed-text' }));
+    expect(result.success).toBe(false);
+    expect(z.prettifyError(result.error!)).toMatch(/does not exist/);
+  });
+
+  it('re-parses an indexed asset to the identical value', () => {
+    const once = Asset.parse(
+      asset({ embedding: [0.1], embeddingModel: 'ollama:nomic-embed-text' }),
+    );
+    expect(Asset.parse(once)).toEqual(once);
+  });
 });
 
 describe('structured output readiness', () => {

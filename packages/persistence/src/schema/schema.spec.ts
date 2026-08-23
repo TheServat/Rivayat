@@ -47,6 +47,7 @@ import {
   relations,
   runs,
   scenes,
+  settings,
   shots,
   spriteSheets,
   styleBibles,
@@ -73,6 +74,7 @@ const ALL_TABLES: readonly SQLiteTable[] = [
   runs,
   jobs,
   usageRecords,
+  settings,
 ];
 
 const NOW = '2026-08-23T00:00:00.000Z' as IsoInstant;

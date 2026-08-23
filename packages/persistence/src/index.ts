@@ -25,3 +25,4 @@ export type {
 } from './blob-store/fs-blob-store';
 
 export { DrizzleAssetRepository } from './repositories/drizzle-asset-repository';
+export { DrizzleSettingsRepository } from './repositories/drizzle-settings-repository';

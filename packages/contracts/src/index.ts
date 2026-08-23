@@ -29,4 +29,6 @@ export * from './provider/index';
 export * from './pipeline/index';
 export * from './render/index';
 
+export * from './settings/index';
+
 export * from './json-schema';

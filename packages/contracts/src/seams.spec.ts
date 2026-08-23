@@ -22,8 +22,18 @@ import { AnimationIR } from './anim/ir';
 import { AssetSpec } from './asset/asset-spec';
 import { Rig } from './asset/rig';
 import { Relation } from './narrative/relation';
+import { PipelineJob } from './pipeline/job';
+import {
+  PIPELINE_STAGE_CODES,
+  PIPELINE_STAGES,
+  PIPELINE_STATUSES,
+  PipelineStage,
+  PipelineStatus,
+} from './pipeline/stage';
 import { BudgetPolicy, CostEstimate } from './provider/usage';
 import { PipelineStageKey, ProviderKind } from './provider/capability';
+import { FORMAT_PRESETS } from './render/format';
+import { RenderJob, RenderJobState } from './render/render-job';
 import { INTAKE_STAGES, IntakeStage, StoryModelProvider } from './story/brief';
 import { Shot } from './story/shot';
 import { SeriesBible } from './story/story-bible';
@@ -244,6 +254,83 @@ describe('narrowed vocabularies are subtractions, not copies', () => {
     }
     expect(StoryModelProvider.safeParse('comfyui').success).toBe(false);
   });
+
+  it('gives the pipeline the stage list the router already had, not a second copy', () => {
+    // `provider/capability.ts` had to name the stages first, because routing and cost
+    // accounting sit below the pipeline in the dependency graph. `PipelineStage` is that
+    // same enum under the canonical name - so a `UsageRecord.stage` and a
+    // `PipelineRun.currentStage` are the same value, not two that happen to agree.
+    expect(PipelineStage.options).toEqual(PipelineStageKey.options);
+    expect(PIPELINE_STAGES).toEqual(PipelineStageKey.options);
+    expect(Object.keys(PIPELINE_STAGE_CODES).sort()).toEqual([...PipelineStageKey.options].sort());
+  });
+
+  it('gives a render job the same six states every other job has', () => {
+    // A render is stage S10 and a `RenderJob` is what sits inside a `PipelineJob` there.
+    // Two state vocabularies would need a mapping table between the job the scheduler
+    // sees and the job the render worker sees, and that is where a cancelled render
+    // starts reporting as failed.
+    expect(RenderJobState.options).toEqual(PipelineStatus.options);
+    expect([...PIPELINE_STATUSES]).toEqual([...RenderJobState.options]);
+  });
+});
+
+// ── a render job is a pipeline job with a render inside it ──────────────────
+
+describe('RenderJob fits inside a PipelineJob unchanged', () => {
+  const runId = `run_${'0'.repeat(24)}R1`;
+  const jobId = `job_${'0'.repeat(24)}J1`;
+
+  const renderJob = RenderJob.parse({
+    id: jobId,
+    runId,
+    request: {
+      projectId: `prj_${'0'.repeat(24)}P1`,
+      animationId: `anm_${'0'.repeat(24)}A1`,
+      formats: [FORMAT_PRESETS['yt-1080p'].id],
+      quality: 'final',
+    },
+    state: 'running',
+    checkpoint: { updatedAt: '2026-08-23T00:00:00Z' },
+    createdAt: '2026-08-23T00:00:00Z',
+    updatedAt: '2026-08-23T00:00:00Z',
+  });
+
+  const wrapped = PipelineJob.parse({
+    id: jobId,
+    runId,
+    stage: 'render',
+    status: renderJob.state,
+    queuedAt: renderJob.createdAt,
+    startedAt: renderJob.createdAt,
+    payload: renderJob,
+  });
+
+  it('survives the round trip through `payload` byte for byte', () => {
+    // The whole justification for an opaque payload. If the generic job record mangled
+    // the stage's own document - dropped a default, reordered a key, stripped a null -
+    // then either every stage payload has to be enumerated here or the render worker
+    // reads something the scheduler did not write.
+    expect(wrapped.payload).toEqual(renderJob);
+    expect(JSON.stringify(wrapped.payload)).toBe(JSON.stringify(renderJob));
+    expect(RenderJob.parse(wrapped.payload)).toEqual(renderJob);
+  });
+
+  it('shares its identity with the job that carries it, rather than being a second job', () => {
+    expect(wrapped.id).toBe(renderJob.id);
+    expect(wrapped.runId).toBe(renderJob.runId);
+  });
+
+  it('needs no translation for its state, because the vocabularies are one list', () => {
+    for (const state of RenderJobState.options) {
+      expect(PipelineStatus.safeParse(state).success, state).toBe(true);
+    }
+    expect(wrapped.status).toBe(renderJob.state);
+  });
+
+  it('places itself at the stage the architecture numbers S10', () => {
+    expect(PIPELINE_STAGE_CODES[wrapped.stage]).toBe('S10');
+  });
 });
 
 // ── non-negotiable #3: a caller can check before it spends ──────────────────
@@ -319,6 +406,9 @@ describe('every domain type is inferred from a schema', () => {
   const ALLOWED_HAND_WRITTEN: Readonly<Record<string, string>> = {
     SchemaDialect: 'json-schema.ts: which provider dialect to emit, not a domain shape',
     LlmSchemaOptions: 'json-schema.ts: arguments to the emitter, not a domain shape',
+    SettingDescriptor:
+      'settings/descriptor.ts: carries a live Zod schema and a default typed by it, neither of which a schema can describe. Its serialisable half IS a schema - `SettingDescriptorMeta` - and registry.spec.ts parses every declaration through it.',
+    AnySettingDescriptor: 'settings/descriptor.ts: `SettingDescriptor<unknown>`, same reason',
   };
 
   /** Derivations of a schema-inferred type are still schema-derived. */
@@ -347,8 +437,11 @@ describe('every domain type is inferred from a schema', () => {
       .map((file) => readFileSync(file, 'utf8'))
       .join('\n');
     for (const name of Object.keys(ALLOWED_HAND_WRITTEN)) {
-      const declared =
-        source.includes(`export type ${name} `) || source.includes(`export interface ${name} `);
+      // A word boundary rather than a trailing space: a generic declaration is followed
+      // by `<`, so the space form could never see one and would report every exempted
+      // generic as stale. `\b` also keeps `SettingDescriptor` from matching
+      // `SettingDescriptorMeta`, which is what the space was buying.
+      const declared = new RegExp(`export (?:type|interface) ${name}\\b`).test(source);
       expect(declared, `${name} is exempted but no longer declared`).toBe(true);
     }
   });

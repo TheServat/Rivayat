@@ -10,13 +10,20 @@
  * smooth across the whole real line, and identical on every machine.
  */
 
-/** Hashes a lattice coordinate to [0, 1). Integer ops only, so it is exact. */
+/**
+ * Hashes a lattice coordinate to [0, 1). Integer ops only, so it is exact.
+ *
+ * The coordinate and the seed are each mixed into the word *before* being combined.
+ * The obvious `(x | 0) ^ seed` leaves adjacent seeds correlated - forty trees seeded
+ * 0..39 then gust in near-unison, which is the exact artefact seeding them separately
+ * was supposed to prevent.
+ */
 function latticeValue(seed: number, x: number): number {
-  let h = (x | 0) ^ seed;
-  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad);
-  h = Math.imul(h ^ (h >>> 15), 0x735a2d97);
-  h = (h ^ (h >>> 15)) >>> 0;
-  return h * 2.3283064365386963e-10;
+  let h = Math.imul((x | 0) ^ 0x27d4eb2f, 0x9e3779b1);
+  h ^= Math.imul((seed | 0) ^ 0x85ebca6b, 0xc2b2ae35);
+  h = Math.imul(h ^ (h >>> 15), 0x2545f491);
+  h = Math.imul(h ^ (h >>> 13), 0x27d4eb2f);
+  return ((h ^ (h >>> 16)) >>> 0) * 2.3283064365386963e-10;
 }
 
 /**

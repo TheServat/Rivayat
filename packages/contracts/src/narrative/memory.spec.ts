@@ -713,3 +713,57 @@ describe('an always-included fact is recognisably unconditional', () => {
     ).toBe(true);
   });
 });
+
+// ── the two ids on a retrieved fact cannot disagree ─────────────────────────
+//
+// `RetrievedFact` carries a `factId` and a discriminated `ref`, and until `Fact`
+// existed neither could be resolved to anything, so nothing noticed when they named
+// different things. Now that both resolve, a row whose `ref` points at fact A while
+// `factId` says B is a specific and nasty bug: the prompt gets A's sentence, the
+// retrieval log records B, and a later `ContinuityIssue` quoting B points at a fact
+// the writer was never shown.
+
+describe('a retrieved fact agrees with its own reference', () => {
+  it('resolves a memory fact by id, which is the ordinary case now that Fact exists', () => {
+    const parsed = RetrievedFact.parse({
+      ...retrievedFact,
+      ref: { kind: 'fact', factId: FACT_ID },
+    });
+    expect(parsed.ref).toEqual({ kind: 'fact', factId: FACT_ID });
+    expect(parsed.factId).toBe(FACT_ID);
+  });
+
+  it('rejects a fact reference that names a different fact from factId', () => {
+    const result = RetrievedFact.safeParse({
+      ...retrievedFact,
+      factId: FACT_ID,
+      ref: { kind: 'fact', factId: OTHER_FACT_ID },
+    });
+    expect(failurePaths(result)).toEqual(['ref.factId']);
+  });
+
+  it('leaves the synthesised kinds alone, which deliberately name something else', () => {
+    // A candidate cut from an entity sheet or the premise has a `factId` of its own and
+    // a `ref` that points at neither a `Fact` row nor the same id. Requiring agreement
+    // there would forbid the entire always-included set.
+    for (const ref of [
+      { kind: 'relation', relationId: relationId('0030') },
+      { kind: 'entity', entityId: ARIA },
+      { kind: 'premise', seriesId: SERIES_ID },
+    ]) {
+      expect(RetrievedFact.safeParse({ ...retrievedFact, ref }).success, ref.kind).toBe(true);
+    }
+  });
+
+  it('offers a case for every kind of thing retrieval can hand a writer', () => {
+    expect(MemoryFactRef.options.map((option) => option.shape.kind.value)).toEqual([
+      'fact',
+      'relation',
+      'entity',
+      'scene',
+      'episode-summary',
+      'open-loop',
+      'premise',
+    ]);
+  });
+});

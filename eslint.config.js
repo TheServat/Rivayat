@@ -49,6 +49,14 @@ export default tseslint.config(
       globals: { ...globals.node },
     },
     plugins: { 'import-x': importX },
+    settings: {
+      // Without this, `import-x` falls back to the legacy node resolver, which resolves
+      // a package by requiring `<pkgDir>/node`. Vite ships a literal `dist/node/`
+      // directory, so ESLint loads Vite *as a resolver* and dies with
+      // `EslintPluginImportResolveError`. That took down `eslint .` for every file in
+      // the repo that imports `vite` - including config files.
+      'import-x/resolver': { typescript: { alwaysTryTypes: true } },
+    },
     rules: {
       // --- correctness -------------------------------------------------
       '@typescript-eslint/no-floating-promises': 'error',

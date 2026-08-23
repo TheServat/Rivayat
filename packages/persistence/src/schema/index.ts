@@ -48,6 +48,9 @@ export type {
   ShotRow,
 } from './story';
 
+export { settings } from './settings';
+export type { NewSettingRow, SettingRow, SettingValueEnvelope } from './settings';
+
 export { jobs, runs, usageRecords } from './ops';
 export type {
   JobRow,

@@ -71,6 +71,12 @@ export interface Contradiction {
   readonly explanation: string;
 }
 
+/**
+ * Relations whose meaning is that information reached the object.
+ *
+ * For these, and only these, being the object of a secret implies knowing it.
+ */
+const INFORMS_THE_OBJECT: ReadonlySet<string> = new Set(['told']);
 /** Relation types where the subject may hold at most one object at a time. */
 const FUNCTIONAL_RELATIONS: ReadonlySet<string> = new Set(['located-in', 'spouse-of', 'native-to']);
 
@@ -184,7 +190,25 @@ export class BiTemporalIndex {
    */
   couldKnow(entity: EntityId, fact: Relation, standpoint: TemporalStandpoint = {}): boolean {
     if (fact.visibility === 'public') return true;
-    if (fact.from === entity || fact.to === entity) return true;
+
+    // The subject of a fact knows their own fact. Aria knows she is Kael's mother.
+    if (fact.from === entity) return true;
+
+    if (fact.to === entity) {
+      // Being the *object* is not the same as knowing. The canonical case in
+      // docs/02 3 is `(Aria) -parent-of-> (Kael)`, kept secret: Kael is the object,
+      // and he is precisely the character the secret is kept from. Treating every
+      // participant as a knower made the rule answer "yes" for the one fact the whole
+      // epistemic layer exists to withhold.
+      //
+      // A non-secret fact is different - a private marriage is still known to both
+      // spouses - so the narrowing applies only to secrets.
+      if (fact.visibility !== 'secret') return true;
+      // ...except where the relation's entire meaning is that information reached the
+      // object. Being *told* something is knowing it.
+      if (INFORMS_THE_OBJECT.has(fact.type)) return true;
+    }
+
     return this.knowledgeOf(entity, standpoint).some(
       (known) => known.to === fact.from || known.to === fact.to,
     );

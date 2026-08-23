@@ -1,4 +1,4 @@
-/**
+﻿/**
  * `PipelineJob` - one unit of work inside a run.
  *
  * A run is the thing a person started; a job is the thing a worker picked up. The
@@ -35,7 +35,7 @@ import {
   PositiveInt,
 } from '../primitives/common';
 import { JobId, RunId } from '../primitives/ids';
-import { ArtifactRef, PipelineStage, PipelineStatus, isTerminalStatus } from './stage';
+import { ArtifactRef, PipelineStage, PipelineStatus, isStoppedStatus } from './stage';
 
 /**
  * One unit of work inside a run.
@@ -134,7 +134,7 @@ export const PipelineJob = z
         message: 'finishedAt must not precede startedAt',
       });
     }
-    if (isTerminalStatus(job.status) && job.finishedAt === null) {
+    if (isStoppedStatus(job.status) && job.finishedAt === null) {
       ctx.addIssue({
         code: 'custom',
         path: ['finishedAt'],

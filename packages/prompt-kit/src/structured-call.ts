@@ -31,7 +31,13 @@ import {
 import { toLlmJsonSchema } from '@rv/contracts';
 import type { z } from 'zod';
 
-import type { CompletionRequest, PromptMessage, StructuredBackend, TokenUsage } from './backend';
+import type {
+  CompletionRequest,
+  ImagePayload,
+  PromptMessage,
+  StructuredBackend,
+  TokenUsage,
+} from './backend';
 import { extractJson, type ExtractionStep } from './json-extract';
 import { buildRepairMessage, buildSchemaInstruction } from './repair';
 
@@ -83,6 +89,14 @@ export interface StructuredRequest<T> {
   readonly backends: readonly StructuredBackend[];
   readonly system?: string;
   readonly user: string;
+  /**
+   * Images the user turn should carry.
+   *
+   * Vision scoring and style derivation both look at pictures, and routing them
+   * through `context` as a separate turn is a workaround, not a design - the model
+   * reads them as prior conversation rather than as the thing being asked about.
+   */
+  readonly images?: readonly ImagePayload[];
   /** Extra turns placed before the user message - few-shot examples, prior context. */
   readonly context?: readonly PromptMessage[];
   /** Repair turns allowed per backend before escalating. Default 2. */
@@ -224,7 +238,11 @@ export class StructuredCall {
       messages.push({ role: 'system', content: systemParts.join('\n\n') });
     }
     if (request.context !== undefined) messages.push(...request.context);
-    messages.push({ role: 'user', content: request.user });
+    messages.push(
+      request.images === undefined
+        ? { role: 'user', content: request.user }
+        : { role: 'user', content: request.user, images: request.images },
+    );
     return messages;
   }
 

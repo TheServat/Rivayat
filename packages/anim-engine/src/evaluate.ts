@@ -50,7 +50,14 @@ export interface EvaluateOptions {
   readonly motion?: Pick<MotionStyle, 'stepMode' | 'easings' | 'tempo'>;
 }
 
-const DEFAULT_EASINGS: readonly EasingCurve[] = [
+/**
+ * The curves `evaluate` falls back to when no style bible is supplied.
+ *
+ * Exported because anything that has to agree with the renderer needs the *same* two
+ * curves - the Lottie exporter had replicated them locally, which is a drift risk that
+ * only shows up as an exported animation that no longer matches its own preview.
+ */
+export const DEFAULT_EASINGS: readonly EasingCurve[] = [
   { name: 'linear', p1: { x: 0, y: 0 }, p2: { x: 1, y: 1 } },
   { name: 'ease-in-out', p1: { x: 0.42, y: 0 }, p2: { x: 0.58, y: 1 } },
 ];
@@ -82,7 +89,6 @@ export function evaluate(
   const locals = new Map<NodeId, Transform2D>();
   const worlds = new Map<NodeId, Transform2D>();
   const auxiliary = new Map<NodeId, ChannelDeltas>();
-  const nodesById = new Map<NodeId, AnimNode>(ir.nodes.map((node) => [node.id, node]));
 
   for (const node of ordered) {
     const deltas = accumulate(node, time, {
@@ -104,13 +110,17 @@ export function evaluate(
     worlds.set(node.id, composeTransform(parent, local));
   }
 
-  resolveDeferred(worlds, nodesById, behavioursByNode, time);
+  resolveDeferred(worlds, behavioursByNode, time);
 
   return {
     timeMs: Math.round(time),
     frame: Math.floor((time / 1000) * ir.fps),
     nodes: ordered.map((node) =>
-      toResolved(node, must(worlds, node.id, 'world transform'), auxiliary.get(node.id) ?? {}),
+      toResolved(
+        node,
+        must(worlds, node.id, 'world transform'),
+        must(auxiliary, node.id, 'channel deltas'),
+      ),
     ),
     camera,
   };
@@ -243,7 +253,9 @@ function interpolateCamera(
   const from = at(keyframes, index);
   const to = at(keyframes, Math.min(index + 1, keyframes.length - 1));
   const span = to.timeMs - from.timeMs;
-  const progress = span === 0 ? 0 : (timeMs - from.timeMs) / span;
+  // span is always positive: the caller only reaches here when 	imeMs lies strictly
+  // between the first and last keyframe, so the scan cannot land on the last one.
+  const progress = (timeMs - from.timeMs) / span;
   // The shared easing implementation, not a second copy: a camera that eased
   // differently from the nodes it frames would read as lag.
   const eased = applyEasing(from.easing, progress, library);
@@ -274,18 +286,18 @@ function lerp(a: number, b: number, t: number): number {
  */
 function resolveDeferred(
   worlds: Map<NodeId, Transform2D>,
-  nodesById: ReadonlyMap<NodeId, AnimNode>,
   behavioursByNode: ReadonlyMap<NodeId, readonly Behaviour[]>,
   timeMs: number,
 ): void {
   for (const [nodeId, behaviours] of behavioursByNode) {
     for (const behaviour of behaviours) {
       if (behaviour.kind !== 'look-at') continue;
-      if (!nodesById.has(behaviour.targetNodeId)) continue;
 
-      const self = worlds.get(nodeId);
-      const target = worlds.get(behaviour.targetNodeId);
-      if (self === undefined || target === undefined) continue;
+      // No existence guards: the IR schema rejects a look-at naming an unknown node,
+      // and the main pass gave every node a world transform. `must` turns a violation
+      // of either into a loud failure rather than a silently skipped behaviour.
+      const self = must(worlds, nodeId, 'world transform');
+      const target = must(worlds, behaviour.targetNodeId, 'look-at target transform');
 
       const weight = behaviour.enabled ? behaviour.weight : 0;
       if (weight === 0) continue;

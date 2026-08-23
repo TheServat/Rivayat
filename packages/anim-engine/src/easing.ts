@@ -24,9 +24,18 @@ import type { Easing, EasingCurve } from '@rv/contracts';
  * approaches zero. Bisection always converges. Running a fixed count of each makes the
  * cost and the answer both constant.
  */
-const NEWTON_PASSES = 4;
-const BISECTION_PASSES = 12;
-const NEWTON_MIN_SLOPE = 1e-4;
+const NEWTON_PASSES = 8;
+const BISECTION_PASSES = 32;
+const NEWTON_MIN_SLOPE = 1e-6;
+/**
+ * Convergence target.
+ *
+ * 1e-9 is far below a pixel at any resolution we render, and both loops are bounded, so
+ * the answer is exact-enough *and* reached in a fixed number of steps. An unbounded
+ * "iterate until close" loop would make the result depend on floating-point luck, and a
+ * baked sheet would drift from its own live playback.
+ */
+const SOLVE_EPSILON = 1e-9;
 
 /** Cubic bezier with implicit endpoints at (0,0) and (1,1). */
 function bezier(t: number, p1: number, p2: number): number {
@@ -42,18 +51,26 @@ function bezierSlope(t: number, p1: number, p2: number): number {
 
 /** Solves `x(t) = x` for t. */
 function solveT(x: number, x1: number, x2: number): number {
+  // Newton first: 2-4 passes on a well-behaved curve, and it lands on the exact answer
+  // for symmetric curves rather than merely near it.
   let t = x;
-
   for (let i = 0; i < NEWTON_PASSES; i += 1) {
+    const error = bezier(t, x1, x2) - x;
+    if (Math.abs(error) < SOLVE_EPSILON) return t;
     const slope = bezierSlope(t, x1, x2);
     if (Math.abs(slope) < NEWTON_MIN_SLOPE) break;
-    t -= (bezier(t, x1, x2) - x) / slope;
+    t -= error / slope;
+    if (t < 0 || t > 1) break;
   }
 
-  // Bisection from a fresh bracket: Newton may have wandered outside [0,1].
+  // Bisection fallback, from a correct bracket. Newton stalls on the flat regions that
+  // anticipation and overshoot curves deliberately contain; bisection always converges.
   let low = 0;
   let high = 1;
-  if (t < 0 || t > 1) t = x;
+  t = (low + high) / 2;
+  // No early exit: 32 halvings resolve to ~2e-10, comfortably past `SOLVE_EPSILON`, so
+  // the budget *is* the convergence criterion. A conditional exit here would add a
+  // branch that can never be taken and would make the cost input-dependent.
   for (let i = 0; i < BISECTION_PASSES; i += 1) {
     const value = bezier(t, x1, x2);
     if (value < x) low = t;

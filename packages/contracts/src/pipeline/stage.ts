@@ -132,9 +132,25 @@ export const PIPELINE_STATUS_TRANSITIONS: Readonly<
   cancelled: [],
 };
 
-/** True once nothing more will happen. The three states with no outgoing edges. */
-export function isTerminalStatus(status: PipelineStatus): boolean {
-  return PIPELINE_STATUS_TRANSITIONS[status].length === 0;
+/**
+ * The three states in which nothing is running.
+ *
+ * Deliberately *not* "the states with no outgoing edges" - `failed` has one, because a
+ * failed run is re-queued to resume from its last checkpoint. Stopped and final are
+ * different questions and only one of them decides whether `finishedAt` must be set:
+ * a failed run has stopped and must record when, even though it may run again.
+ */
+export const PIPELINE_STOPPED_STATUSES = [
+  'succeeded',
+  'failed',
+  'cancelled',
+] as const satisfies readonly PipelineStatus[];
+
+const STOPPED: ReadonlySet<string> = new Set<string>(PIPELINE_STOPPED_STATUSES);
+
+/** True once the run or job has come to rest, whether or not it may be started again. */
+export function isStoppedStatus(status: PipelineStatus): boolean {
+  return STOPPED.has(status);
 }
 
 /**

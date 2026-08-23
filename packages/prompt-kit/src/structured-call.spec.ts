@@ -339,6 +339,26 @@ describe('what gets sent to the backend', () => {
     expect('signal' in sent).toBe(false);
   });
 
+  it('attaches images to the user turn, not to a separate context message', async () => {
+    // Routing pictures through `context` makes the model read them as prior
+    // conversation rather than as the subject of the question being asked.
+    const backend = new ScriptedBackend('m', [VALID]);
+    const { call, request } = callWith(backend);
+    const image = { mimeType: 'image/png' as const, base64: 'iVBORw0KGgo=' };
+
+    await call.run({ ...request, images: [image] });
+
+    const userTurn = backend.requests[0]?.messages.at(-1);
+    expect(userTurn?.role).toBe('user');
+    expect(userTurn?.images).toEqual([image]);
+  });
+
+  it('omits the images key entirely when there are none', async () => {
+    const backend = new ScriptedBackend('m', [VALID]);
+    const { call, request } = callWith(backend);
+    await call.run(request);
+    expect('images' in (backend.requests[0]?.messages.at(-1) ?? {})).toBe(false);
+  });
   it('passes context turns through in order, before the user message', async () => {
     const backend = new ScriptedBackend('m', [VALID]);
     const { call, request } = callWith(backend);
