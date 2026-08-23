@@ -28,15 +28,20 @@ export type {
 export { styleBibles } from './style';
 export type { NewStyleBibleRow, StyleBibleRow } from './style';
 
-export { entities, facts, relations } from './narrative';
+export { beliefs, entities, facts, relations } from './narrative';
 export type {
+  BeliefRow,
   EntityRow,
   FactRow,
+  NewBeliefRow,
   NewEntityRow,
   NewFactRow,
   NewRelationRow,
   RelationRow,
 } from './narrative';
+
+export { projects, series } from './project';
+export type { NewProjectRow, NewSeriesRow, ProjectRow, SeriesRow } from './project';
 
 export { episodes, scenes, shots } from './story';
 export type {
@@ -60,3 +65,9 @@ export type {
   RunRow,
   UsageRecordRow,
 } from './ops';
+
+export { renderArtifacts } from './render';
+export type { NewRenderArtifactRow, RenderArtifactRow } from './render';
+
+export { produceCheckpoints } from './checkpoints';
+export type { NewProduceCheckpointRow, ProduceCheckpointRow } from './checkpoints';

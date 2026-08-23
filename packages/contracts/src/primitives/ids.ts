@@ -28,6 +28,7 @@ export const ID_PREFIXES = {
   entity: 'ent',
   relation: 'rel',
   fact: 'fct',
+  belief: 'bel',
   openLoop: 'lop',
   community: 'cmt',
 
@@ -105,6 +106,18 @@ export type RelationId = z.infer<typeof RelationId>;
 
 export const FactId = idSchema('fact', 'FactId');
 export type FactId = z.infer<typeof FactId>;
+
+/**
+ * A belief, which is not a fact.
+ *
+ * A fact is what is true; a belief is what a character holds, and the whole epistemic
+ * layer turns on the difference (docs/02 3). They are stored in two tables and they
+ * need two id spaces: `ContinuityIssue.conflictingFacts` is a list of `FactId`s that
+ * has to resolve to edges the UI can highlight, and if a belief could carry a `fct_`
+ * id then resolving one would silently land in the wrong table.
+ */
+export const BeliefId = idSchema('belief', 'BeliefId');
+export type BeliefId = z.infer<typeof BeliefId>;
 
 export const OpenLoopId = idSchema('openLoop', 'OpenLoopId');
 export type OpenLoopId = z.infer<typeof OpenLoopId>;
@@ -225,6 +238,9 @@ export class Ids {
   }
   fact(): FactId {
     return this.mint('fact');
+  }
+  belief(): BeliefId {
+    return this.mint('belief');
   }
   openLoop(): OpenLoopId {
     return this.mint('openLoop');

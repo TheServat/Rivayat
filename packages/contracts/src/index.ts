@@ -5,13 +5,16 @@
  * schemas produce the JSON Schema an LLM is constrained by (`toLlmJsonSchema`) and the
  * DTOs the API exposes, so those three can never drift apart.
  *
- * Barrel order follows the dependency order of the domain: primitives, then style,
- * then the narrative world model, then story structure, then assets and animation,
- * then the operational concerns.
+ * Barrel order follows the dependency order of the domain: primitives, then the
+ * project everything hangs off, then style, then the narrative world model, then story
+ * structure, then assets and animation, then the operational concerns.
  */
 
 export * from './primitives/ids';
 export * from './primitives/common';
+
+export * from './project/project';
+export * from './project/series-card';
 
 export * from './style/style-bible';
 
@@ -24,6 +27,7 @@ export * from './asset/asset';
 
 export * from './anim/easing';
 export * from './anim/ir';
+export * from './anim/features';
 
 export * from './provider/index';
 export * from './pipeline/index';

@@ -342,6 +342,23 @@ export type AnySettingDescriptor = SettingDescriptor<unknown>;
 
 // ── rules that follow from a descriptor ─────────────────────────────────────
 
+/*
+ * Three of the five take `SettingDescriptorMeta`, not `AnySettingDescriptor`.
+ *
+ * `isWritableAt`, `writableScopes` and `isVisible` read `secret`, `scope` and
+ * `dependsOn` - every one of which is on the wire. Demanding the live descriptor, with
+ * its Zod `schema` and its typed `default`, made them uncallable from the one place
+ * that most needs them: a browser has a `SettingDescriptorMeta` and can never have the
+ * other two, so the studio grew a shim that faked a schema to satisfy the signature.
+ * A shim that fabricates the argument a function does not read is a shim that will
+ * eventually fabricate one it does.
+ *
+ * `defaultIsValid` keeps the full descriptor because it genuinely needs both halves.
+ * `closedChoiceValues` reads only `control` and `options` and could widen too; it has
+ * not, because nothing has asked, and widening on speculation is how a signature ends
+ * up describing no caller.
+ */
+
 /**
  * Whether `layer` may hold a value for this setting.
  *
@@ -350,7 +367,7 @@ export type AnySettingDescriptor = SettingDescriptor<unknown>;
  * secret written at project scope would be a database row that gets exported with the
  * project, and no amount of redaction downstream can put that back.
  */
-export function isWritableAt(descriptor: AnySettingDescriptor, layer: SettingScope): boolean {
+export function isWritableAt(descriptor: SettingDescriptorMeta, layer: SettingScope): boolean {
   if (descriptor.secret) return layer === 'machine';
   return originRank(layer) <= originRank(descriptor.scope);
 }
@@ -361,7 +378,7 @@ export function isWritableAt(descriptor: AnySettingDescriptor, layer: SettingSco
  * Exists so the settings screen can render "project · run" next to a field instead of
  * re-deriving the rule above and getting the secret case wrong.
  */
-export function writableScopes(descriptor: AnySettingDescriptor): readonly SettingScope[] {
+export function writableScopes(descriptor: SettingDescriptorMeta): readonly SettingScope[] {
   return SettingScope.options.filter((scope) => isWritableAt(descriptor, scope));
 }
 
@@ -373,13 +390,33 @@ export function writableScopes(descriptor: AnySettingDescriptor): readonly Setti
  * would be quadratic in the size of the registry.
  */
 export function isVisible(
-  descriptor: AnySettingDescriptor,
+  descriptor: SettingDescriptorMeta,
   valueOf: (key: string) => unknown,
 ): boolean {
   return descriptor.dependsOn.every((dependency) => {
     const current = valueOf(dependency.key);
     return dependency.equals.some((candidate) => candidate === current);
   });
+}
+
+/**
+ * The serialisable half of a descriptor, as one function instead of three copies.
+ *
+ * The two unserialisable members are removed **by name** and the rest is parsed through
+ * {@link SettingDescriptorMeta}, which is a `strictObject`. Both halves of that matter.
+ * Dropping `schema` and `default` is deliberate - a live Zod schema cannot cross a wire
+ * and a client that received one would be executing code it was sent - while any
+ * *other* member a future descriptor grows fails here, at boot, naming the key, instead
+ * of arriving in a browser as a field nothing renders.
+ *
+ * It is here rather than in the API because three places were already doing it: the
+ * settings service, the registry spec, and any test that needs a wire-shaped
+ * descriptor. Three spellings of "strip the two unserialisable fields" is three places
+ * to forget the third one when it appears.
+ */
+export function toDescriptorMeta(descriptor: AnySettingDescriptor): SettingDescriptorMeta {
+  const { schema: _schema, default: _default, ...meta } = descriptor;
+  return SettingDescriptorMeta.parse(meta);
 }
 
 /**

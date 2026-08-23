@@ -3,7 +3,9 @@
  *
  * Three things live here, and the split is ADR-0006's: metadata in a single SQLite
  * file through Drizzle, binaries in a content-addressed directory, and the repository
- * adapters that join the two behind interfaces declared in `@rv/asset-registry`.
+ * adapters that join the two behind interfaces declared elsewhere - in
+ * `@rv/asset-registry`, in `@rv/settings`, and in `@rv/asset-engine` for the produce
+ * chain's resume points.
  *
  * Nothing in the domain or application layers may import this package.
  * `.dependency-cruiser.cjs` enforces that in CI; the reason is that a Postgres or S3
@@ -25,4 +27,5 @@ export type {
 } from './blob-store/fs-blob-store';
 
 export { DrizzleAssetRepository } from './repositories/drizzle-asset-repository';
+export { DrizzleProduceCheckpointRepository } from './repositories/drizzle-produce-checkpoint.repository';
 export { DrizzleSettingsRepository } from './repositories/drizzle-settings-repository';

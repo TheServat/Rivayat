@@ -15,6 +15,13 @@
       "when": 1787491889906,
       "tag": "0001_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787500000000,
+      "tag": "0002_beliefs_facts_run_states_and_missing_tables",
+      "breakpoints": true
     }
   ]
 }

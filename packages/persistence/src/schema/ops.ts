@@ -7,12 +7,26 @@
  * are flat numeric records in the contract and are flattened here for exactly that
  * reason: `SELECT sum(cost_nano_usd) … GROUP BY provider` must never parse JSON.
  *
- * `runs` and `jobs` have **no schema in `@rv/contracts`**. `RunId` and `JobId` are in
- * the id registry and `UsageRecord`/`RenderJob` both point at them, but nothing
- * defines what a run or a generic job *is*. These two tables are therefore storage's
- * own shape, kept deliberately thin: the identifiers and lifecycle fields the queue
- * and the ledger need as columns, and whatever the stage cares about in `payload`.
- * `RenderJob` fits inside `payload`/`result` unchanged.
+ * `runs` and `jobs` stay deliberately thin - the identifiers and lifecycle fields the
+ * queue and the ledger need as columns, and whatever the stage cares about in
+ * `payload`. `RenderJob` fits inside `payload`/`result` unchanged, and `PipelineRun` in
+ * `@rv/contracts` describes the resumable execution these rows are the durable half of.
+ *
+ * **Both `state` columns are `PipelineStatus`, all six of them.** `runs.state` used to
+ * offer five - `queued | running | paused | done | failed` - so the six the pipeline has
+ * were folded onto them: `succeeded` was stored as `done`, and **`cancelled` was stored
+ * as `failed`**. That second fold is the one that mattered. "I stopped it" and "it
+ * broke" are the two answers a user most needs told apart, `PIPELINE_STATUS_TRANSITIONS`
+ * gives them different futures - a failed run may be re-queued to resume, a cancelled
+ * one may not - and the column could not tell them apart at all. `DrizzleRunRepository`
+ * worked around it by keeping the true status in `metadata.status` and letting the
+ * indexed column hold the lossy one, which meant the index that exists to answer
+ * "show me the failed runs" answered it wrongly.
+ *
+ * `jobs.state` offered five of a different five, missing `paused`. The contract is
+ * explicit that runs and jobs share one lifecycle precisely so a cancelled run does not
+ * become a failed job at the boundary; both columns now take the same enum from the same
+ * place.
  */
 
 import type {
@@ -20,6 +34,7 @@ import type {
   IsoInstant,
   JobId,
   PipelineStageKey,
+  PipelineStatus,
   ProjectId,
   ProviderKind,
   QualityTier,
@@ -39,7 +54,13 @@ export const runs = sqliteTable(
     projectId: text('project_id').notNull().$type<ProjectId>(),
     /** Which stage of the pipeline this run is executing. */
     stage: text('stage').notNull().$type<PipelineStageKey>(),
-    state: text('state').notNull().$type<'queued' | 'running' | 'paused' | 'done' | 'failed'>(),
+    /**
+     * The run lifecycle, from `PipelineStatus` rather than a private list.
+     *
+     * Six values, including `cancelled` as its own row value. See the file header for
+     * what the five-value column cost.
+     */
+    state: text('state').notNull().$type<PipelineStatus>(),
     /** `null` for an unbudgeted run. The guard treats that as "ask before every spend". */
     budgetNanoUsd: integer('budget_nano_usd'),
     /** Denormalised sum of this run's usage records, so the guard is one read. */
@@ -71,9 +92,8 @@ export const jobs = sqliteTable(
       .$type<RunId>()
       .references(() => runs.id),
     stage: text('stage').notNull().$type<PipelineStageKey>(),
-    state: text('state')
-      .notNull()
-      .$type<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'>(),
+    /** The same six-value lifecycle a run has. One vocabulary, no translation. */
+    state: text('state').notNull().$type<PipelineStatus>(),
     attempt: integer('attempt').notNull(),
     /** The stage's own request. A `RenderJob` lives here unchanged. */
     payload: jsonDoc<Record<string, unknown>>()('payload').notNull(),

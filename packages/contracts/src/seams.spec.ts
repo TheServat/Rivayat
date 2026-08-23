@@ -100,6 +100,8 @@ const REFINEMENT_INVENTORY: Readonly<Record<string, string>> = {
     'a failed job names its error; a finished job started first and finished after; a terminal job records when; attempts stay inside the retry budget',
   PipelineRun:
     'requested stages are in pipeline order with no repeats; the current stage and every checkpoint were requested; no stage is checkpointed twice; a failed run names its error; a terminal run records when',
+  Project:
+    'updatedAt >= createdAt - a project touched before it existed breaks every recency sort the list is built on',
   PropPayload: 'a riggable prop describes what articulates',
   ReframePlan: 'a plan containing a safe-area violation flags itself for review',
   Relation:
@@ -409,6 +411,8 @@ describe('every domain type is inferred from a schema', () => {
     SettingDescriptor:
       'settings/descriptor.ts: carries a live Zod schema and a default typed by it, neither of which a schema can describe. Its serialisable half IS a schema - `SettingDescriptorMeta` - and registry.spec.ts parses every declaration through it.',
     AnySettingDescriptor: 'settings/descriptor.ts: `SettingDescriptor<unknown>`, same reason',
+    IrFeatureUse:
+      'anim/features.ts: a `ReadonlyMap` from a derivation, not a document. Nothing stores or transmits it - a Map has no JSON form - and its key type `IrFeature` IS a schema.',
   };
 
   /** Derivations of a schema-inferred type are still schema-derived. */
