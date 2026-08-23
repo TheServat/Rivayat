@@ -317,7 +317,7 @@ describe.each(CASES)('provider contract: $name', (testCase) => {
     expect(stub.requests).toHaveLength(0);
   });
 
-  it('maps a signal aborted mid-flight to CancelledError within 100 ms', async () => {
+  it('maps a signal aborted mid-flight to CancelledError without waiting out a backoff', async () => {
     const stub = new FetchStub().on(testCase.route, { hang: true });
     if (testCase.stubsGlobalFetch === true) vi.stubGlobal('fetch', stub.fetch);
     const adapter = testCase.build(stub);
@@ -330,7 +330,13 @@ describe.each(CASES)('provider contract: $name', (testCase) => {
 
     const outcome = await invokeWithSignal(testCase, adapter, controller.signal);
 
-    expect(Date.now() - startedAt).toBeLessThan(100);
+    // 400 ms, not a tight 100 ms. The property under test is "the abort is noticed
+    // immediately rather than after a retry wait", and the shortest such wait is
+    // `initialBackoffMs`, which defaults to 500 ms and only grows - jitter here is
+    // additive. So 400 ms still fails any adapter that sleeps before checking the
+    // signal, while leaving room for a loaded machine: at four vitest workers this
+    // assertion was the one flake in the suite.
+    expect(Date.now() - startedAt).toBeLessThan(400);
     expect(isErr(outcome)).toBe(true);
     if (isErr(outcome)) expect(outcome.error.kind).toBe('cancelled');
   });
