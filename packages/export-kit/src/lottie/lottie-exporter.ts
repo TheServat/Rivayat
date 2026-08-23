@@ -19,6 +19,13 @@
  * The cost is that the layer tree cannot be re-parented downstream, reported as a
  * `restructured` warning on `node:hierarchy`.
  *
+ * **The two spaces put the origin in different places.** Scene space is centre-origin -
+ * `@rv/render-engine`'s `frames/draw-list.ts` fixes it, and it is what makes a camera at
+ * `{x: 0, y: 0}` frame the middle of the composition - while a Lottie composition is
+ * top-left origin with no negative half. Every position written here is therefore shifted
+ * by half the canvas; see {@link sceneCentreOf} and {@link toCompositionSpace}, which is
+ * the only place the conversion happens.
+ *
  * What survives exactly, what is approximated, and what is dropped is declared in
  * {@link LOTTIE_CAPABILITIES} and returned per export in `warnings`.
  */
@@ -37,7 +44,7 @@ import type {
   Size,
   TextNode,
   Track,
-  Transform2D,
+  Vec2,
 } from '@rv/contracts';
 import {
   type EasingLibrary,
@@ -360,7 +367,9 @@ function buildDocument(input: ExportInput, opts: ResolvedLottieOptions): BuiltDo
   let bakedKeyframes = 0;
 
   for (const node of ordered) {
-    const samples = frames.map((_, index) => at(poses, index).get(node.id) ?? restPose(node));
+    const samples = frames.map(
+      (_, index) => at(poses, index).get(node.id) ?? restPose(node, ir.sceneSpace),
+    );
     const transform = buildTransform(node, frames, samples, sparse, opts, skewConflicts);
     keyframes += transform.keyframes;
     bakedKeyframes += transform.baked;
@@ -483,33 +492,52 @@ function posesAt(
 }
 
 /**
- * The camera, folded into a world transform.
+ * The middle of the authoring canvas, in scene coordinates and in Lottie coordinates.
  *
- * Defined as a pan / zoom / roll of the whole scene **about the scene centre**, so an
- * identity camera is an identity transform - a camera at the origin with zoom 1 must not
- * move anything, or every clip without a camera would need a different code path. The
- * pan sign matches the `parallax` behaviour's: moving the camera right moves content
- * left.
+ * The two spaces disagree about where nothing is, and this is the only place that
+ * disagreement is resolved. Scene space puts the origin at the **centre** of the canvas
+ * (`@rv/render-engine`, `frames/draw-list.ts`: "the origin is the centre of the canvas,
+ * so the canvas spans `[-w/2, +w/2] x [-h/2, +h/2]`"), which is also what makes an
+ * identity camera frame the middle of the composition. A Lottie composition puts its
+ * origin at the **top-left** and has no negative half at all.
+ *
+ * So every position written to a layer is shifted by half the canvas. Without the shift
+ * a node at scene `(0, 0)` renders in the middle of the frame and exports to the corner,
+ * and everything the author composed to the left of centre falls outside the file.
  */
-function foldCameraInto(
-  world: Transform2D,
+function sceneCentreOf(sceneSpace: Size): Vec2 {
+  return { x: sceneSpace.width / 2, y: sceneSpace.height / 2 };
+}
+
+/**
+ * A scene-space point in the Lottie composition's coordinates, camera included.
+ *
+ * Mirrors `cameraMatrix` in `@rv/render-engine` (`frames/matrix.ts`) term for term:
+ *
+ * ```
+ *   screen = sceneCentre + zoom · R(-cameraRotation) · (position - cameraPosition)
+ * ```
+ *
+ * The subtraction is against the **camera position**, not against the scene centre: the
+ * camera pans, zooms and rolls about *itself*, so a pan of 100 units under a 2x zoom
+ * moves content by 200 pixels. Rotating about the scene centre and then translating by
+ * the raw pan - which is what this used to do - agrees with the renderer only when the
+ * zoom is exactly 1 and the camera sits at the origin.
+ *
+ * An identity camera is still an identity: `(p - 0) · 1` rotated by nothing is `p`.
+ */
+function toCompositionSpace(
+  position: Vec2,
   camera: SceneSnapshot['camera'],
   sceneSpace: Size,
-): Transform2D {
-  const centre = { x: sceneSpace.width / 2, y: sceneSpace.height / 2 };
-  const relative = { x: world.position.x - centre.x, y: world.position.y - centre.y };
+  foldCamera: boolean,
+): Vec2 {
+  const centre = sceneCentreOf(sceneSpace);
+  if (!foldCamera) return { x: centre.x + position.x, y: centre.y + position.y };
+
+  const relative = { x: position.x - camera.position.x, y: position.y - camera.position.y };
   const rotated = rotateVec(relative, -camera.rotation);
-  return {
-    position: {
-      x: centre.x + rotated.x * camera.zoom - camera.position.x,
-      y: centre.y + rotated.y * camera.zoom - camera.position.y,
-    },
-    rotation: world.rotation - camera.rotation,
-    scale: { x: world.scale.x * camera.zoom, y: world.scale.y * camera.zoom },
-    skew: world.skew,
-    anchor: world.anchor,
-    opacity: world.opacity,
-  };
+  return { x: centre.x + rotated.x * camera.zoom, y: centre.y + rotated.y * camera.zoom };
 }
 
 function toPose(
@@ -519,23 +547,24 @@ function toPose(
   sceneSpace: Size,
   foldCamera: boolean,
 ): LayerPose {
-  const world = foldCamera
-    ? foldCameraInto(resolved.worldTransform, camera, sceneSpace)
-    : resolved.worldTransform;
+  const world = resolved.worldTransform;
+  const position = toCompositionSpace(world.position, camera, sceneSpace, foldCamera);
+  const zoom = foldCamera ? camera.zoom : 1;
   return {
-    position: [world.position.x, world.position.y],
-    scalePercent: [world.scale.x * 100, world.scale.y * 100],
-    rotation: world.rotation,
+    position: [position.x, position.y],
+    scalePercent: [world.scale.x * zoom * 100, world.scale.y * zoom * 100],
+    rotation: foldCamera ? world.rotation - camera.rotation : world.rotation,
     opacityPercent: (visible ? world.opacity : 0) * 100,
     skew: [world.skew.x, world.skew.y],
   };
 }
 
 /** The pose of a node the evaluator did not resolve. Defensive; the schema prevents it. */
-function restPose(node: AnimNode): LayerPose {
+function restPose(node: AnimNode, sceneSpace: Size): LayerPose {
   const t = node.transform;
+  const centre = sceneCentreOf(sceneSpace);
   return {
-    position: [t.position.x, t.position.y],
+    position: [centre.x + t.position.x, centre.y + t.position.y],
     scalePercent: [t.scale.x * 100, t.scale.y * 100],
     rotation: t.rotation,
     opacityPercent: (node.visible ? t.opacity : 0) * 100,
@@ -692,6 +721,8 @@ class SparseAnalysis {
   readonly #library: EasingLibrary;
   readonly #fps: number;
   readonly #enabled: boolean;
+  /** Scene origin to Lottie origin. See {@link sceneCentreOf}. */
+  readonly #centre: Vec2;
 
   constructor(
     ir: AnimationIR,
@@ -712,6 +743,7 @@ class SparseAnalysis {
     );
     this.#library = library;
     this.#fps = ir.fps;
+    this.#centre = sceneCentreOf(ir.sceneSpace);
     // A stepped cadence quantises time before anything is evaluated, and a tempo other
     // than 1 rescales it. Both make "the value at the authored keyframe time" the wrong
     // answer, so neither is eligible.
@@ -796,10 +828,13 @@ class SparseAnalysis {
     const base = node.transform;
     const d = delta ?? 0;
     switch (channel) {
+      // Shifted into the composition's top-left origin exactly as `toCompositionSpace`
+      // does for the baked path. The sparse path only runs with the camera unfolded, so
+      // the centre offset is the whole of the conversion.
       case 'position.x':
-        return base.position.x + d;
+        return this.#centre.x + base.position.x + d;
       case 'position.y':
-        return base.position.y + d;
+        return this.#centre.y + base.position.y + d;
       case 'rotation':
         return base.rotation + d;
       case 'scale.x':
@@ -1075,18 +1110,28 @@ function shapeGeometry(node: ShapeNode): LottieShapeItem | undefined {
   }
 }
 
-/** `"x,y x,y"` or `"x y x y"` into vertex pairs. Trailing odd values are ignored. */
+/**
+ * `"x,y x,y"` or `"x y x y"` into vertex pairs. Trailing odd values are ignored.
+ *
+ * Deliberately identical to `parsePoints` in `@rv/render-engine` (`backends/painter.ts`),
+ * down to which tokens it looks at: only the ones it consumes. Rejecting the whole
+ * geometry over a trailing token the renderer never reads would mean the preview draws a
+ * polygon and the export drops it, with no warning to say so - `node:shape` is declared
+ * exact, so a silent omission here is a lie about what the file contains.
+ */
 function parsePoints(geometry: string | undefined): readonly (readonly [number, number])[] {
   if (geometry === undefined) return [];
   const numbers = geometry
     .split(/[\s,]+/u)
     .filter((token) => token.length > 0)
     .map(Number);
-  if (numbers.some((value) => !Number.isFinite(value))) return [];
 
   const points: [number, number][] = [];
   for (let index = 0; index + 1 < numbers.length; index += 2) {
-    points.push([at(numbers, index), at(numbers, index + 1)]);
+    const x = at(numbers, index);
+    const y = at(numbers, index + 1);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+    points.push([x, y]);
   }
   return points;
 }

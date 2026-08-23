@@ -340,4 +340,62 @@ describe('parsePoints', () => {
     expect(parsePoints(null)).toEqual([]);
     expect(parsePoints('a,b')).toEqual([]);
   });
+
+  /**
+   * The table `@rv/export-kit` holds its own parser to.
+   *
+   * `ShapeNode.geometry` is free text and two packages parse it independently. When they
+   * disagree the picture and the exported file disagree, and neither package's own suite
+   * can see it - `node:shape` is declared `exact` by the Lottie exporter, so a polygon
+   * this painter draws and that exporter drops leaves no warning behind.
+   *
+   * The same cases are asserted in
+   * `packages/export-kit/src/lottie/geometry-parity.spec.ts`. Changing one parser has to
+   * change both tables.
+   */
+  it.each([
+    [
+      'comma pairs',
+      '0,0 100,0 50,80',
+      [
+        [0, 0],
+        [100, 0],
+        [50, 80],
+      ],
+    ],
+    [
+      'space pairs',
+      '0 0 100 0 50 80',
+      [
+        [0, 0],
+        [100, 0],
+        [50, 80],
+      ],
+    ],
+    [
+      'a trailing unpaired number is ignored',
+      '0,0 100,0 50,80 7',
+      [
+        [0, 0],
+        [100, 0],
+        [50, 80],
+      ],
+    ],
+    [
+      'a trailing token nobody reads is ignored',
+      '0,0 100,0 50,80 x',
+      [
+        [0, 0],
+        [100, 0],
+        [50, 80],
+      ],
+    ],
+    ['junk inside a consumed pair is fatal', '0,0 abc,def', []],
+    ['a non-finite coordinate is fatal', '0,0 Infinity,0 10,10', []],
+    ['one vertex parses', '5,5', [[5, 5]]],
+  ] as const)('agrees with the exporter: %s', (_why, geometry, expected) => {
+    expect(parsePoints(geometry).map((point) => [point.x, point.y])).toEqual(
+      expected.map((point) => [point[0], point[1]]),
+    );
+  });
 });

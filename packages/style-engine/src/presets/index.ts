@@ -53,6 +53,7 @@ export type { MotionSignature } from './motion-signature';
 export {
   MOTION_DISTINCTNESS_FLOOR,
   motionDifferences,
+  coreMotionDistance,
   motionDistance,
   motionSignature,
 } from './motion-signature';

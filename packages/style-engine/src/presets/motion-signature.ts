@@ -111,13 +111,25 @@ export function motionSignature(motion: MotionStyle): MotionSignature {
 }
 
 /**
- * Mean per-dimension difference between two motion profiles, 0..1.
+ * Dimensions that decide how a *cut* is made, not how anything *moves*.
  *
- * Unweighted on purpose. A weighting would encode an opinion about which part of
- * movement matters most, and the point of the measure is to catch a library that has no
- * opinion at all.
+ * These are real differences between styles and they belong in `MotionStyle`, but none of
+ * them changes what a viewer sees a character do. `defaultShotMs` and `cutRhythm` are
+ * editing; `allowZoom` and `allowRoll` are permissions the choreographer may never use.
+ *
+ * They are excluded from {@link coreMotionDistance} because together they are worth
+ * `4/34` of the unweighted mean - enough, on their own, to carry two otherwise identical
+ * profiles over {@link MOTION_DISTINCTNESS_FLOOR}. A distinctness measure that can be
+ * satisfied by changing the shot length is not measuring movement.
  */
-export function motionDistance(a: MotionStyle, b: MotionStyle): number {
+export const EDITORIAL_DIMENSIONS: ReadonlySet<string> = new Set([
+  'camera.defaultShotMs',
+  'camera.allowZoom',
+  'camera.allowRoll',
+  'camera.cutRhythm',
+]);
+
+function meanDifference(a: MotionStyle, b: MotionStyle, include: (key: string) => boolean): number {
   const left = motionSignature(a);
   const right = motionSignature(b);
 
@@ -125,15 +137,49 @@ export function motionDistance(a: MotionStyle, b: MotionStyle): number {
   let count = 0;
 
   for (const [key, value] of Object.entries(left.scalars)) {
+    if (!include(key)) continue;
     total += Math.abs(value - (right.scalars[key] ?? 0));
     count += 1;
   }
   for (const [key, value] of Object.entries(left.categories)) {
+    if (!include(key)) continue;
     total += value === right.categories[key] ? 0 : 1;
     count += 1;
   }
 
   return count === 0 ? 0 : total / count;
+}
+
+/**
+ * Mean per-dimension difference between two motion profiles, 0..1.
+ *
+ * Unweighted on purpose. A weighting would encode an opinion about which part of
+ * movement matters most, and the point of the measure is to catch a library that has no
+ * opinion at all.
+ *
+ * This is the *whole* profile, editorial dimensions included, which is the right answer to
+ * "how different are these two `MotionStyle` values". It is the wrong answer to "do these
+ * two styles move differently" - see {@link coreMotionDistance}.
+ */
+export function motionDistance(a: MotionStyle, b: MotionStyle): number {
+  return meanDifference(a, b, () => true);
+}
+
+/**
+ * The same measure over the dimensions that actually govern movement.
+ *
+ * {@link motionDistance} is gameable in exactly one way, and it is a way a preset author
+ * would stumble into rather than commit: two profiles identical in frame rate, tempo, step
+ * mode, every motion principle, boil, easing, ambient life, parallax and shake still score
+ * above the floor if they merely cut differently and disagree about whether the camera may
+ * zoom. Nothing a viewer could point at has changed.
+ *
+ * So the floor is asserted on *this* number over the shipped library, and the two measures
+ * are kept side by side rather than one replacing the other: the full distance is still
+ * what a diff view wants to show.
+ */
+export function coreMotionDistance(a: MotionStyle, b: MotionStyle): number {
+  return meanDifference(a, b, (key) => !EDITORIAL_DIMENSIONS.has(key));
 }
 
 /** The fields on which two profiles actually differ. For a diff view, and for test output. */

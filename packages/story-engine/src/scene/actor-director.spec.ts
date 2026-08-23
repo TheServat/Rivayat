@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { Scene } from '@rv/contracts';
 import { isErr } from '@rv/shared-kernel';
 
 import { FakeStructuredBackend, respondError, respondJson } from '../__fixtures__/fakes';
@@ -191,6 +192,74 @@ describe('WriteSceneDialogueUseCase', () => {
     }
     expect(backend.promptAt(2)).toContain(full.summary);
     expect(backend.promptAt(2)).toContain(full.outcome);
+  });
+
+  /**
+   * The narrator's account of the scene, with every field individually traceable.
+   *
+   * The test above names `summary` and `outcome`, which are the two fields somebody
+   * thought of. This one marks *every* string on `Scene` and its beats, so adding a
+   * `{{goal}}` or a `{{beats}}` slot to `ACTOR_TAKE_PROMPT` tomorrow fails here rather
+   * than shipping a cast that has read the script.
+   */
+  function markedScene(): Scene {
+    const base = scene();
+    const mark = (field: string): string => `ZQX-${field}-ZQX`;
+    return Scene.parse({
+      ...base,
+      title: mark('title'),
+      summary: mark('summary'),
+      plannedSummary: mark('plannedSummary'),
+      goal: mark('goal'),
+      conflict: mark('conflict'),
+      outcome: mark('outcome'),
+      valueShift: { ...base.valueShift, axis: mark('axis') },
+      beats: base.beats.map((beat, index) => ({
+        ...beat,
+        title: mark(`beatTitle${String(index)}`),
+        summary: mark(`beatSummary${String(index)}`),
+        plannedSummary: mark(`beatPlanned${String(index)}`),
+      })),
+    });
+  }
+
+  function markersIn(text: string): readonly string[] {
+    return [...new Set([...text.matchAll(/ZQX-[A-Za-z0-9]+-ZQX/gu)].map((match) => match[0]))];
+  }
+
+  it('leaks no field of the narrator’s scene into any actor prompt, not only the summary', async () => {
+    const backend = scriptedBackend();
+    const marked = markedScene();
+    await new WriteSceneDialogueUseCase(testDeps(backend)).execute(input({ scene: marked }));
+
+    for (const index of [0, 1]) {
+      const whole = `${backend.promptAt(index)}
+${backend.systemPromptAt(index)}`;
+      expect(markersIn(whole), `actor ${String(index)} was shown the script`).toEqual([]);
+    }
+
+    // The director does see it, so the absence above is a redaction and not an empty run.
+    expect(markersIn(backend.promptAt(2)).length).toBeGreaterThan(6);
+  });
+
+  it('does not let one actor’s take reach another actor, only the director', async () => {
+    // The actors are called in sequence, so the first take exists by the time the second
+    // call is built. Nothing may carry it across: an actor who has read the other take has
+    // heard a performance they were not in the room for.
+    const secret = 'ZQX-firstTake-ZQX';
+    const backend = new FakeStructuredBackend({
+      script: [
+        respondJson(take(secret)),
+        respondJson(take('Nothing to add.')),
+        respondJson(directed([line(1, secret, 0), line(2, 'Nothing to add.', 900)])),
+      ],
+    });
+    await new WriteSceneDialogueUseCase(testDeps(backend)).execute(input());
+
+    expect(backend.promptAt(1)).not.toContain(secret);
+    expect(backend.systemPromptAt(1)).not.toContain(secret);
+    // The director is given every take; that is what reconciliation is.
+    expect(backend.promptAt(2)).toContain(secret);
   });
 
   it("binds each actor to its own voice and to no one else's", async () => {

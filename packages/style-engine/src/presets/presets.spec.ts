@@ -1,12 +1,17 @@
-import { type ArtMedium, StyleBible } from '@rv/contracts';
-import { isErr, isOk } from '@rv/shared-kernel';
+import { type ArtMedium, type MotionStyle, StyleBible } from '@rv/contracts';
+import { at, isErr, isOk } from '@rv/shared-kernel';
 import { describe, expect, it } from 'vitest';
 
 import { testClock, testIds } from '../__fixtures__/fakes';
 import { compilePromptFragments } from '../prompts/compile';
 import { materialiseStyleBible } from '../style-bible-factory';
 import { STYLE_PRESETS, findPreset, presetIds, presetsForMedium } from './index';
-import { MOTION_DISTINCTNESS_FLOOR, motionDifferences, motionDistance } from './motion-signature';
+import {
+  MOTION_DISTINCTNESS_FLOOR,
+  coreMotionDistance,
+  motionDifferences,
+  motionDistance,
+} from './motion-signature';
 import { PRESET_DEFINITIONS } from './library';
 import { toStylePreset } from './preset';
 
@@ -138,6 +143,75 @@ describe('preset motion profiles', () => {
       ).toBeGreaterThanOrEqual(MOTION_DISTINCTNESS_FLOOR);
     },
   );
+
+  /**
+   * The same floor, over the dimensions that decide movement rather than editing.
+   *
+   * `motionDistance` is a mean over every dimension of `MotionStyle`, and four of those -
+   * shot length, cut rhythm, and whether the camera may zoom or roll - are worth `4/34`
+   * between them. Two profiles identical in frame rate, tempo, step mode, all eight
+   * principles, boil, easing and every ambient value score 0.125 on the full measure and
+   * clear the 0.12 floor while being, to a viewer, the same motion.
+   *
+   * So the library is held to the floor on the core measure too. It passes with room -
+   * the closest pair is `ink-comic` vs `felt-craft` - and no preset or threshold moved to
+   * make that true.
+   */
+  it.each(pairs.map(([left, right]) => [`${left.id} vs ${right.id}`, left, right] as const))(
+    '%s differ in how they move, not only in how they are cut',
+    (label, left, right) => {
+      const distance = coreMotionDistance(left.draft.motion, right.draft.motion);
+      expect(
+        distance,
+        `${label} are distinguishable only by editorial settings (core distance ${distance.toFixed(3)})`,
+      ).toBeGreaterThanOrEqual(MOTION_DISTINCTNESS_FLOOR);
+    },
+  );
+
+  it('rejects a twin that clears the full floor on editorial dimensions alone', () => {
+    // The counterexample, built rather than described. Everything a viewer could see is
+    // byte-identical; only the cut and two camera permissions differ.
+    const base = at(STYLE_PRESETS, 0).draft.motion;
+    const twin: MotionStyle = {
+      ...base,
+      ambient: { ...base.ambient, blinkIntervalMs: 12_000 },
+      camera: {
+        ...base.camera,
+        defaultShotMs: 12_000,
+        allowZoom: !base.camera.allowZoom,
+        allowRoll: !base.camera.allowRoll,
+        cutRhythm: base.camera.cutRhythm === 'languid' ? 'frenetic' : 'languid',
+      },
+    };
+
+    // Nothing that governs movement has changed.
+    expect(twin.fps).toBe(base.fps);
+    expect(twin.stepMode).toBe(base.stepMode);
+    expect(twin.tempo).toBe(base.tempo);
+    expect(twin.easings).toEqual(base.easings);
+    expect(twin.principles).toEqual(base.principles);
+    expect(twin.boil).toEqual(base.boil);
+    expect(twin.camera.parallaxStrength).toBe(base.camera.parallaxStrength);
+    expect(twin.camera.shakeAmplitude).toBe(base.camera.shakeAmplitude);
+
+    // The full measure is fooled; the core measure is not.
+    expect(motionDistance(base, twin)).toBeGreaterThanOrEqual(MOTION_DISTINCTNESS_FLOOR);
+    expect(coreMotionDistance(base, twin)).toBeLessThan(MOTION_DISTINCTNESS_FLOOR);
+  });
+
+  it('still counts a change to how something moves, wherever it is', () => {
+    // The core measure must not have been narrowed into uselessness: a real motion change
+    // has to register, and register at least as strongly as it does on the full measure.
+    const base = at(STYLE_PRESETS, 0).draft.motion;
+    const heavier: MotionStyle = {
+      ...base,
+      principles: { ...base.principles, weight: 1, overshoot: 0, followThrough: 0 },
+      ambient: { ...base.ambient, windAmplitude: 1, idleAmplitude: 1 },
+    };
+
+    expect(coreMotionDistance(base, heavier)).toBeGreaterThan(0);
+    expect(coreMotionDistance(base, heavier)).toBeGreaterThanOrEqual(motionDistance(base, heavier));
+  });
 
   it.each(pairs.map(([left, right]) => [`${left.id} vs ${right.id}`, left, right] as const))(
     '%s differ on step mode or easing curves (RV-041)',

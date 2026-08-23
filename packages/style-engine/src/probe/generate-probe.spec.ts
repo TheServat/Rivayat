@@ -1,6 +1,18 @@
 import type { ModelDescriptor } from '@rv/contracts';
 import { computeStyleChecksum } from '@rv/core-domain';
-import { ProviderError, isErr, isOk, stableStringify } from '@rv/shared-kernel';
+import {
+  type AppError,
+  BudgetExceededError,
+  ProviderError,
+  type Result,
+  UNIT,
+  type Unit,
+  err,
+  isErr,
+  isOk,
+  ok,
+  stableStringify,
+} from '@rv/shared-kernel';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -10,7 +22,11 @@ import {
   unlockedBibleFrom,
 } from '../__fixtures__/fakes';
 import { STYLE_PRESETS } from '../presets/index';
-import { GenerateStyleProbeUseCase } from './generate-probe';
+import {
+  GenerateStyleProbeUseCase,
+  type ProbeSpendGuard,
+  type ProbeSpendRequest,
+} from './generate-probe';
 import { PROBE_SUBJECTS } from './subjects';
 
 function preset(id: string) {
@@ -224,5 +240,118 @@ describe('the probe subject set', () => {
       expect(entry.label.fa.length).toBeGreaterThan(0);
       expect(entry.label.en).toBeDefined();
     }
+  });
+});
+
+/**
+ * CLAUDE.md #3, on the one loop in this package that spends real money.
+ *
+ * "Cost is metered before it is spent. ... The budget guard runs *before* the call." A
+ * probe sheet is four image generations, and on the paid lane every one of them is
+ * billable, so the interesting assertion is not that the total is right at the end - it is
+ * that the provider is never reached once the ceiling is hit.
+ *
+ * The guard is therefore exercised by *counting provider requests*, not by inspecting the
+ * returned cost: a use-case that generated all four tiles and then reported a refusal
+ * would satisfy any assertion about the result and would still have spent the money.
+ */
+describe('GenerateStyleProbeUseCase, the budget guard', () => {
+  /** A model the catalogue has a price for, so the running spend is non-zero. */
+  const PRICED_IMAGE_MODEL = 'openrouter:google/gemini-3.1-flash-lite-image';
+
+  /** Records every question asked, and answers `allow` of them before refusing. */
+  class CountingGuard implements ProbeSpendGuard {
+    readonly asked: ProbeSpendRequest[] = [];
+    readonly #allow: number;
+
+    constructor(allow: number) {
+      this.#allow = allow;
+    }
+
+    check(request: ProbeSpendRequest): Result<Unit, AppError> {
+      this.asked.push(request);
+      return this.asked.length <= this.#allow
+        ? ok(UNIT)
+        : err(new BudgetExceededError('run', 5, 6));
+    }
+  }
+
+  function guarded(port: FakeImagePort, budget: ProbeSpendGuard): GenerateStyleProbeUseCase {
+    return new GenerateStyleProbeUseCase({
+      imageLanes: { paid: port },
+      clock: testClock(),
+      budget,
+    });
+  }
+
+  it('touches no provider at all when the first tile is already over the ceiling', async () => {
+    const port = new FakeImagePort({ modelRef: PRICED_IMAGE_MODEL });
+    const guard = new CountingGuard(0);
+
+    const result = await guarded(port, guard).execute({ bible: LOCKED, lane: 'paid' });
+
+    expect(isErr(result)).toBe(true);
+    if (!isErr(result)) return;
+    // The guard's own typed refusal, not a wrapper: a caller has to be able to branch on
+    // "budget" and on "not retryable".
+    expect(result.error.kind).toBe('budget');
+    expect(result.error.retryable).toBe(false);
+    expect(port.requests).toHaveLength(0);
+    expect(guard.asked).toHaveLength(1);
+  });
+
+  it('stops the loop at the ceiling instead of finishing the sheet and reporting it', async () => {
+    const port = new FakeImagePort({ modelRef: PRICED_IMAGE_MODEL });
+    const guard = new CountingGuard(2);
+
+    const result = await guarded(port, guard).execute({ bible: LOCKED, lane: 'paid' });
+
+    expect(isErr(result)).toBe(true);
+    expect(port.requests).toHaveLength(2);
+    // Asked three times: twice allowed, once refused. The third question came before the
+    // third generation, which is the whole property.
+    expect(guard.asked).toHaveLength(3);
+    expect(guard.asked.map((entry) => entry.tileIndex)).toEqual([0, 1, 2]);
+  });
+
+  it('asks once per tile, before that tile, and never after the last one', async () => {
+    const port = new FakeImagePort({ modelRef: PRICED_IMAGE_MODEL });
+    const guard = new CountingGuard(Number.POSITIVE_INFINITY);
+
+    const result = await guarded(port, guard).execute({ bible: LOCKED, lane: 'paid' });
+
+    expect(isOk(result)).toBe(true);
+    expect(guard.asked).toHaveLength(PROBE_SUBJECTS.length);
+    expect(port.requests).toHaveLength(PROBE_SUBJECTS.length);
+    for (const entry of guard.asked) {
+      expect(entry.lane).toBe('paid');
+      expect(entry.images).toBe(1);
+    }
+  });
+
+  it('shows the guard what the sheet has cost so far, so a ceiling can be cumulative', async () => {
+    // A guard that is only ever told "one more image" cannot enforce a per-run ceiling;
+    // it has to be able to add the projection to what has already gone.
+    const port = new FakeImagePort({ modelRef: PRICED_IMAGE_MODEL });
+    const guard = new CountingGuard(Number.POSITIVE_INFINITY);
+
+    const result = await guarded(port, guard).execute({ bible: LOCKED, lane: 'paid' });
+    expect(isOk(result)).toBe(true);
+    if (!isOk(result)) return;
+
+    const spend = guard.asked.map((entry) => entry.spentNanoUsd);
+    expect(spend[0]).toBe(0);
+    // Non-decreasing, and the last question knew about every tile but its own.
+    expect(spend).toEqual([...spend].sort((left, right) => left - right));
+    expect(spend[spend.length - 1]).toBeLessThan(result.value.totalCostNanoUsd);
+    expect(spend[spend.length - 1]).toBeGreaterThan(0);
+  });
+
+  it('generates exactly as before when no guard is wired, so the free lane is unaffected', async () => {
+    const port = new FakeImagePort();
+    const result = await subject(port).execute({ bible: LOCKED });
+
+    expect(isOk(result)).toBe(true);
+    expect(port.requests).toHaveLength(PROBE_SUBJECTS.length);
   });
 });

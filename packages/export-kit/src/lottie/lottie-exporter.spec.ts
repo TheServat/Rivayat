@@ -41,6 +41,21 @@ function layerFor(doc: LottieDocument, nodeId: string): LottieLayer {
   return layer!;
 }
 
+/**
+ * Where a scene-space point belongs in the composition, per the shared convention.
+ *
+ * Scene space is centre-origin (`@rv/render-engine`, `frames/draw-list.ts`); a Lottie
+ * composition is top-left origin. Written out here rather than imported so this file
+ * states the contract it is holding the exporter to, instead of restating whatever the
+ * exporter happens to compute.
+ */
+function toComposition(
+  ir: AnimationIR,
+  point: { readonly x: number; readonly y: number },
+): { x: number; y: number } {
+  return { x: ir.sceneSpace.width / 2 + point.x, y: ir.sceneSpace.height / 2 + point.y };
+}
+
 // ── the shape lottie-web insists on ─────────────────────────────────────────
 
 describe('the emitted document', () => {
@@ -128,6 +143,10 @@ describe('fidelity against evaluate(ir, t)', () => {
         const layer = layerFor(doc, node.nodeId);
         const world = node.worldTransform;
         const declared = ir.nodes.find((candidate) => candidate.id === node.nodeId);
+        // The evaluator works in centre-origin scene space; the file is written in the
+        // composition's top-left origin. Comparing the two raw would pass only for an
+        // exporter that had lost half the canvas.
+        const expected = toComposition(ir, world.position);
 
         const position = sampleLottieProperty(layer.ks.p, frame);
         const scale = sampleLottieProperty(layer.ks.s, frame);
@@ -135,8 +154,8 @@ describe('fidelity against evaluate(ir, t)', () => {
         const opacity = sampleLottieProperty(layer.ks.o, frame);
 
         const errors = [
-          Math.abs((position[0] ?? 0) - world.position.x),
-          Math.abs((position[1] ?? 0) - world.position.y),
+          Math.abs((position[0] ?? 0) - expected.x),
+          Math.abs((position[1] ?? 0) - expected.y),
           Math.abs((scale[0] ?? 0) - world.scale.x * 100),
           Math.abs((scale[1] ?? 0) - world.scale.y * 100),
           Math.abs((rotation[0] ?? 0) - world.rotation),
@@ -176,8 +195,11 @@ describe('fidelity against evaluate(ir, t)', () => {
     expect(layer.ks.p.k[2]?.t).toBe(60);
     expect(layer.ks.p.k[0]?.o).toEqual({ x: [0.42], y: [0] });
     expect(layer.ks.p.k[0]?.i).toEqual({ x: [0.58], y: [1] });
-    // The node's authored transform is folded in: position.x starts at 100, not 0.
-    expect(layer.ks.p.k[0]?.s).toEqual([100, 50]);
+    // The node's authored transform is folded in - position.x starts at 100, not 0 - and
+    // then shifted into the composition's top-left origin, so the sparse path and the
+    // baked path land in the same place.
+    const start = toComposition(ir, { x: 100, y: 50 });
+    expect(layer.ks.p.k[0]?.s).toEqual([start.x, start.y]);
 
     expect(output.stats.bakedKeyframeCount).toBe(0);
     expect(output.stats.fidelity?.worst).toBeLessThan(1e-5);

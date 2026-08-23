@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InternalError, isErr, isOk } from '@rv/shared-kernel';
+import { InternalError, createRng, isErr, isOk } from '@rv/shared-kernel';
 import { MemoryRetrievalRequest, MemoryRetrievalResult } from '@rv/contracts';
 
 import {
@@ -14,6 +14,7 @@ import {
   SERIES_ID,
   episodeId,
   episodeSummary,
+  openLoop,
   relation,
   relationFact,
   sceneId,
@@ -101,10 +102,104 @@ describe('RetrieveSceneContextUseCase — determinism', () => {
     expect(backwards.value.facts).toStrictEqual(forwards.value.facts);
   });
 
+  /**
+   * Reversal is one permutation, and one permutation is not the property.
+   *
+   * A comparator that reaches for the *middle* of an array, or a `Map` seeded in insertion
+   * order and read back in it, survives `[...items].reverse()` and dies on a shuffle. The
+   * claim is "same graph state, same result" for any array order at all, so it is asserted
+   * over many seeded permutations of every collection the graph holds - and of the
+   * request's own entity list, which the caller controls independently.
+   *
+   * Seeded rather than random: a flaky determinism test is worse than none, because it
+   * teaches people to re-run it.
+   */
+  function shuffle<T>(items: readonly T[], seed: number): readonly T[] {
+    const rng = createRng(seed);
+    const out = [...items];
+    for (let index = out.length - 1; index > 0; index -= 1) {
+      const swap = Math.floor(rng.next() * (index + 1));
+      const here = out[index];
+      const there = out[swap];
+      if (here === undefined || there === undefined) continue;
+      out[index] = there;
+      out[swap] = here;
+    }
+    return out;
+  }
+
+  it('is unchanged under any permutation of any of its input arrays', async () => {
+    const ordered = graphWithOutline();
+    const summaries = [1, 2, 3, 4, 5].map((index) =>
+      episodeSummary(`e0${String(index)}`, { index: index - 1 }),
+    );
+    const loops = ['loop-a', 'loop-b', 'loop-c'].map((slug) => openLoop(slug));
+
+    const permuted = (seed: number): NarrativeGraph =>
+      new NarrativeGraph({
+        seriesId: SERIES_ID,
+        entities: shuffle(valeEntities(), seed),
+        relations: shuffle(valeRelations(), seed + 101),
+        facts: shuffle(ordered.facts, seed + 202),
+        openLoops: shuffle(loops, seed + 303),
+        episodeSummaries: shuffle(summaries, seed + 404),
+        seriesSummary: seriesSummary(),
+        episodeOrder: ordered.episodeOrder,
+      });
+
+    const reference = await useCase().execute({
+      graph: permuted(1),
+      request: request({ sceneEntities: [KAEL, ARIA] }),
+    });
+    expect(isOk(reference)).toBe(true);
+    if (!isOk(reference)) return;
+
+    const hashes = new Set<string>();
+    for (let seed = 1; seed <= 24; seed += 1) {
+      const graph = permuted(seed);
+      hashes.add(graph.stateHash);
+      const result = await useCase().execute({
+        graph,
+        // The caller's own ordering is an input too, and it alternates here.
+        request: request({ sceneEntities: seed % 2 === 0 ? [ARIA, KAEL] : [KAEL, ARIA] }),
+      });
+      expect(isOk(result), `seed ${String(seed)} failed`).toBe(true);
+      if (!isOk(result)) return;
+      expect(result.value, `seed ${String(seed)} diverged`).toStrictEqual(reference.value);
+    }
+
+    // The same set is the same state: one hash across every permutation, or `stateHash`
+    // is a hash of the array and cannot be used to check a replay.
+    expect(hashes.size).toBe(1);
+  });
+
+  it('shuffles the fixture enough for the previous test to mean something', () => {
+    // A shuffle that returned its input would make the assertion above vacuous.
+    const entities = valeEntities();
+    const distinct = new Set(
+      [1, 2, 3, 4, 5, 6, 7, 8].map((seed) =>
+        shuffle(entities, seed)
+          .map((entity) => entity.id)
+          .join('|'),
+      ),
+    );
+    expect(distinct.size).toBeGreaterThan(1);
+    expect(distinct.has(entities.map((entity) => entity.id).join('|'))).toBe(false);
+  });
+
   it('breaks ties on a stable key rather than on insertion order', async () => {
     // Every weight zeroed: every candidate scores exactly 0, so ordering is decided
     // entirely by the tie-break.
-    const graph = graphWithOutline();
+    //
+    // The open loops are load-bearing, not decoration. Facts arrive from `graph.facts`,
+    // which `NarrativeGraph` has already sorted by id, so a graph without loops hands the
+    // ranker a list that is *already* in the right order and the tie-break is never
+    // exercised - the assertion passes with both stable sorts deleted. Open-loop
+    // candidates are appended afterwards under **derived** ids that interleave with the
+    // fact ids, which is what makes the unsorted order genuinely wrong.
+    const graph = graphWithOutline().with({
+      openLoops: ['alpha', 'beta', 'gamma', 'delta'].map((slug) => openLoop(slug)),
+    });
     const flat = request({
       weights: {
         graphProximity: 0,
@@ -122,8 +217,39 @@ describe('RetrieveSceneContextUseCase — determinism', () => {
     const scored = result.value.facts.filter((fact) => fact.reason === 'scored');
     expect(scored.length).toBeGreaterThan(1);
     expect(scored.every((fact) => fact.score === 0)).toBe(true);
+    // Both kinds are in the tie, or the interleaving above did not happen and the test is
+    // back to asserting the graph's own ordering.
+    expect(new Set(scored.map((fact) => fact.ref.kind))).toEqual(new Set(['fact', 'open-loop']));
     const ids = scored.map((fact) => fact.factId);
     expect(ids).toEqual([...ids].sort());
+  });
+
+  it('ranks by score descending and then by factId, whatever the scores are', async () => {
+    // The ordering contract stated in full rather than only at the all-tied extreme, so a
+    // tie-break that survives on a flat fixture cannot survive a real one.
+    const graph = graphWithOutline().with({
+      openLoops: ['alpha', 'beta', 'gamma', 'delta'].map((slug) => openLoop(slug)),
+    });
+    const result = await useCase().execute({ graph, request: request({ tokenBudget: 100_000 }) });
+    expect(isOk(result)).toBe(true);
+    if (!isOk(result)) return;
+
+    const scored = result.value.facts.filter((fact) => fact.reason === 'scored');
+    expect(scored.length).toBeGreaterThan(1);
+    for (let index = 1; index < scored.length; index += 1) {
+      const previous = scored[index - 1];
+      const current = scored[index];
+      if (previous === undefined || current === undefined) continue;
+      expect(previous.score, `rank ${String(index)} scores out of order`).toBeGreaterThanOrEqual(
+        current.score,
+      );
+      if (previous.score === current.score) {
+        expect(
+          previous.factId < current.factId,
+          `tied ranks ${String(index - 1)}/${String(index)} are not id-ordered`,
+        ).toBe(true);
+      }
+    }
   });
 });
 

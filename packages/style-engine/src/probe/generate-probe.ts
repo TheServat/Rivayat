@@ -43,6 +43,7 @@ import {
   type NanoUsd,
   NoopLogger,
   type Result,
+  type Unit,
   ValidationError,
   ZERO_USD,
   err,
@@ -109,6 +110,39 @@ export interface GenerateStyleProbeInput {
   readonly signal?: AbortSignal;
 }
 
+/** What is about to be spent, before it is. */
+export interface ProbeSpendRequest {
+  readonly lane: StyleProbeLane;
+  /** Which tile, zero-based, so a refusal can say how far the sheet got. */
+  readonly tileIndex: number;
+  /** Images this one call will ask for. Explicit, so a batched call cannot slip past. */
+  readonly images: number;
+  /** What this sheet has already cost, in nano-dollars. */
+  readonly spentNanoUsd: NanoUsd;
+}
+
+/**
+ * The ceiling, asked **before** each tile.
+ *
+ * CLAUDE.md #3: "the budget guard runs *before* the call". A probe sheet is a loop of
+ * `PROBE_SUBJECTS.length` image generations, and on the paid lane every one of them is
+ * money - so a check that ran once at the top, or a total totted up at the bottom, would
+ * be a receipt rather than a guard.
+ *
+ * A narrow port rather than `BudgetGuard` itself, for the reason CLAUDE.md §2 gives for
+ * narrow ports: this use-case does not know the run id, the policy or the ledger, and it
+ * should not have to. The composition root adapts `@rv/providers`' `BudgetGuard` onto
+ * this shape, where it can supply the projected price of one image on the routed model -
+ * which is a number `ImageGenerationPort` cannot currently be asked for.
+ *
+ * Optional on {@link GenerateStyleProbeDeps} only because the default lane is the local
+ * one and costs nothing. Wire it for anything that can reach the paid lane.
+ */
+export interface ProbeSpendGuard {
+  /** `err` refuses the tile, and the provider is not touched. */
+  check(request: ProbeSpendRequest): Result<Unit, AppError>;
+}
+
 export interface GenerateStyleProbeDeps {
   /**
    * One port per lane.
@@ -120,6 +154,8 @@ export interface GenerateStyleProbeDeps {
   readonly clock: Clock;
   /** Defaults to `KNOWN_MODELS` via `pricingFor`. */
   readonly catalogue?: readonly ModelDescriptor[];
+  /** Consulted before every tile. See {@link ProbeSpendGuard}. */
+  readonly budget?: ProbeSpendGuard;
   readonly logger?: Logger;
 }
 
@@ -127,12 +163,14 @@ export class GenerateStyleProbeUseCase {
   readonly #lanes: Partial<Record<StyleProbeLane, ImageGenerationPort>>;
   readonly #clock: Clock;
   readonly #catalogue: readonly ModelDescriptor[];
+  readonly #budget: ProbeSpendGuard | undefined;
   readonly #logger: Logger;
 
   constructor(deps: GenerateStyleProbeDeps) {
     this.#lanes = deps.imageLanes;
     this.#clock = deps.clock;
     this.#catalogue = deps.catalogue ?? KNOWN_MODELS;
+    this.#budget = deps.budget;
     this.#logger = deps.logger ?? new NoopLogger();
   }
 
@@ -168,6 +206,25 @@ export class GenerateStyleProbeUseCase {
       // candidate must produce the same sheet, so the cache serves a regeneration and
       // the ledger records another zero (RV-044).
       const seed = input.bible.seed + index;
+
+      // Before the spend, never after. A refusal returns the guard's own error rather
+      // than a wrapper: `BudgetExceededError` names the ceiling and is deliberately
+      // not retryable, and re-wrapping it would lose both.
+      const allowed = this.#budget?.check({
+        lane,
+        tileIndex: index,
+        images: 1,
+        spentNanoUsd: nanoUsd(total),
+      });
+      if (allowed !== undefined && isErr(allowed)) {
+        this.#logger.warn('style probe: refused by the budget guard', {
+          lane,
+          tileIndex: index,
+          spentNanoUsd: total,
+          code: allowed.error.code,
+        });
+        return allowed;
+      }
 
       const generated = await port.generateImage({
         prompt: prompt.positive,

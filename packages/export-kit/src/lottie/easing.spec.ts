@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEasingLibrary } from '@rv/anim-engine';
+import { DEFAULT_EASINGS, buildEasingLibrary } from '@rv/anim-engine';
 
 import { isExactlyRepresentable, overshoots, toSegmentEase } from './easing';
 
@@ -21,6 +21,31 @@ describe('toSegmentEase', () => {
       out: { x: [0.42], y: [0] },
       in: { x: [0.58], y: [1] },
     });
+  });
+
+  /**
+   * One definition of a named curve, in `@rv/anim-engine`, for all three consumers.
+   *
+   * The style bible declares curves by name, the evaluator resolves them, and this
+   * exporter writes them into a file. `DEFAULT_EASINGS` is exported from the evaluator
+   * precisely so no second copy exists - a local table would produce an export that no
+   * longer matches its own preview, and the fidelity number could not see it because
+   * both halves of that comparison would use the local copy.
+   *
+   * So the assertion is against the evaluator's own array, read at test time. Re-declaring
+   * `ease-in-out` here with different control points fails.
+   */
+  it('resolves the fallback curves from the evaluator, never from a local copy', () => {
+    const fallback = buildEasingLibrary(DEFAULT_EASINGS);
+    for (const curve of DEFAULT_EASINGS) {
+      expect(toSegmentEase({ kind: 'named', name: curve.name }, fallback)).toEqual({
+        kind: 'bezier',
+        out: { x: [curve.p1.x], y: [curve.p1.y] },
+        in: { x: [curve.p2.x], y: [curve.p2.y] },
+      });
+    }
+    // And the mapping is the identity on the numbers, so nothing was rescaled on the way.
+    expect(DEFAULT_EASINGS.map((curve) => curve.name)).toContain('ease-in-out');
   });
 
   it('throws on a name the style bible does not define, rather than easing linearly', () => {

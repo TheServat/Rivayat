@@ -23,6 +23,7 @@ export {
   STYLE_PRESETS,
   findPreset,
   motionDifferences,
+  coreMotionDistance,
   motionDistance,
   motionSignature,
   presetIds,
@@ -115,6 +116,8 @@ export { PROBE_SUBJECTS } from './probe/subjects';
 export type {
   GenerateStyleProbeDeps,
   GenerateStyleProbeInput,
+  ProbeSpendGuard,
+  ProbeSpendRequest,
   StyleProbeLane,
   StyleProbeSheet,
   StyleProbeTile,
