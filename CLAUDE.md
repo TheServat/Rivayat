@@ -80,7 +80,8 @@ message wording.
 
 ```bash
 pnpm install
-pnpm verify        # format + lint + typecheck + arch + test — must be green before "done"
+pnpm verify        # format:check + lint + typecheck + arch:check + determinism:check + test:cov
+                   # must be green before "done"
 pnpm test          # all packages
 pnpm arch:check    # dependency rule
 pnpm --filter @rv/<pkg> build

@@ -214,7 +214,13 @@ function namesAnInboundConversion(name: string): boolean {
 /** Every `export`ed top-level declaration in the shipped source. */
 async function exportedDeclarations(): Promise<readonly { file: string; name: string }[]> {
   const { readdir, readFile } = await import('node:fs/promises');
-  const { join } = await import('node:path');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+
+  // Resolved from this file, not from `process.cwd()`. `walk('src')` passes under
+  // `cd packages/export-kit && vitest run` and fails under the root `pnpm test`,
+  // where the working directory is the repo root and there is no `src` there.
+  const src = dirname(fileURLToPath(import.meta.url));
 
   const found: { file: string; name: string }[] = [];
   const walk = async (dir: string): Promise<void> => {
@@ -236,7 +242,7 @@ async function exportedDeclarations(): Promise<readonly { file: string; name: st
       }
     }
   };
-  await walk('src');
+  await walk(src);
   return found;
 }
 

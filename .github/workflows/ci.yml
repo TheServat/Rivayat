@@ -1,4 +1,4 @@
-name: CI
+name: verify
 
 on:
   push:
@@ -15,68 +15,81 @@ permissions:
   contents: read
 
 env:
-  # Deterministic, non-interactive, and no telemetry chatter in the logs.
   CI: 'true'
-  NODE_ENV: test
   TURBO_TELEMETRY_DISABLED: '1'
   DO_NOT_TRACK: '1'
-  # No provider keys in CI. Adapters must fall back to recorded fixtures;
-  # a test that needs the network is a broken test.
+  # CI spends $0. No provider credential is exposed to any job here, and none may be
+  # added: `verify-drift-check` fails the build if one appears. Every adapter is
+  # exercised against recorded fixtures, and an unmatched request throws rather than
+  # reaching the network (packages/providers/src/__contract__).
+  #
+  # Empty REDIS_URL keeps the pipeline on the in-process queue (ADR-0006), which is the
+  # driver that actually ships; the BullMQ driver needs a live Redis and is excluded from
+  # coverage rather than pretended to be tested.
   REDIS_URL: ''
+  # ~400 MB per OS per run, for browsers nothing in `pnpm verify` launches. The render
+  # backend's Playwright path is covered by unit tests over a stubbed browser; the real
+  # browser check is `apps/web/e2e`, which is not part of this workflow.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
 jobs:
   # ---------------------------------------------------------------------------
-  # verify: the exact five steps of `pnpm verify`, split so a failure is
-  # attributable to one of them rather than to "the script".
-  #   package.json: "verify": "format:check && lint && typecheck && arch:check && test"
-  # The drift guard below fails the build if that chain changes without this
-  # workflow changing with it.
+  # verify — the gate, run on both operating systems.
+  #
+  # Windows is the primary development machine and two of the defects found so far were
+  # Windows-only: a command-line length limit, and PowerShell mangling a quoted string.
+  # Neither is reachable from a Linux runner, so a Linux-only CI would have shipped both.
+  # Steps therefore use each runner's default shell (bash on Linux, pwsh on Windows) and
+  # every `run:` is a single command that both understand.
   # ---------------------------------------------------------------------------
   verify:
-    name: Verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      # Cancelling the Linux leg the moment Windows goes red would hide which of the two
+      # actually broke - the one thing this matrix exists to tell them apart.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Enable Corepack
-        # Provides the `pnpm` shim before setup-node looks for it to resolve the
-        # store path for caching.
-        run: corepack enable
+      - name: Set up pnpm
+        # No `version:` on purpose: the action reads `packageManager` from package.json,
+        # so pnpm's version has exactly one home. Must precede setup-node, which needs
+        # `pnpm` on PATH to resolve the store directory it is about to cache.
+        uses: pnpm/action-setup@v6
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
 
-      - name: Activate the pinned pnpm
-        # No version here on purpose: `corepack prepare --activate` with no spec
-        # reads `packageManager` from package.json, so pnpm's version has exactly
-        # one source of truth.
+      - name: Versions
+        # One command per line: bash and pwsh both read this the same way.
         run: |
-          corepack prepare --activate
-          echo "node: $(node --version)"
-          echo "pnpm: $(pnpm --version)"
+          node --version
+          pnpm --version
 
-      - name: Guard against CI/verify drift
-        run: |
-          expected='pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run arch:check && pnpm run test'
-          actual=$(node -p "require('./package.json').scripts.verify")
-          if [ "$actual" != "$expected" ]; then
-            echo "::error file=package.json::pnpm verify changed but .github/workflows/ci.yml did not."
-            echo "  expected: $expected"
-            echo "  actual:   $actual"
-            exit 1
-          fi
+      - name: Guard the CI/local contract
+        # Runs before install: it needs no dependencies, and drift should be reported in
+        # ten seconds rather than after a four-minute install.
+        run: node tools/scripts/verify-drift-check.mjs
 
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # --- the five steps of `pnpm verify`, in order -------------------------
-
+      # ----------------------------------------------------------------------
+      # verify:steps:begin
+      #
+      # These are `pnpm verify`, one step each so a failure names itself instead of
+      # being reported as "the script failed". The list and its order are asserted
+      # against package.json by the guard above - edit both or neither.
+      # ----------------------------------------------------------------------
       - name: format:check
         run: pnpm run format:check
 
@@ -89,57 +102,69 @@ jobs:
       - name: arch:check
         run: pnpm run arch:check
 
-      - name: test
-        run: pnpm run test
+      - name: determinism:check
+        run: pnpm run determinism:check
 
-      # --- extra: coverage ---------------------------------------------------
-      # Deliberately a separate step, not a replacement for `test`. `test:cov`
-      # additionally enforces the thresholds in vitest.config.ts, so folding it
-      # into the step above would make CI stricter than local `pnpm verify` —
-      # the drift this job exists to prevent. Keeping it separate means a
-      # coverage failure is reported as a coverage failure.
-      - name: Coverage
+      - name: test + coverage floors
         run: pnpm run test:cov
+      # verify:steps:end
+
+      # ----------------------------------------------------------------------
+      # Deliberately outside the block above: `pnpm verify` does not build, so a broken
+      # tsup or dts config would otherwise hide behind a green verify. It is cheap here
+      # because `pnpm typecheck` already built every package's dependencies through
+      # turbo, so this is mostly a cache hit.
+      # ----------------------------------------------------------------------
+      - name: build
+        run: pnpm build
 
       - name: Upload coverage
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: coverage
-          path: |
-            coverage/
-            packages/*/coverage/
-            apps/*/coverage/
+          name: coverage-${{ matrix.os }}
+          path: coverage/
           if-no-files-found: warn
           retention-days: 14
 
   # ---------------------------------------------------------------------------
-  # build: separate job. `pnpm verify` does not build, so a broken tsup/dts
-  # config must not hide behind a green verify.
+  # per-package test scripts.
+  #
+  # `pnpm test` at the root is one Vitest process over every project. That is the fast
+  # path, but it hides a package whose own `vitest.config.ts` is broken, or missing -
+  # exactly the defect in docs/05-remaining-work.md W2, where `apps/cli` had no config,
+  # resolved the root workspace, matched no project and took down every package after it.
+  #
+  # `--no-bail` is what makes this readable: without it the first red package stops the
+  # run and the seventeen green ones are simply absent from the report. With it, the log
+  # ends in `Summary: 1 fails, 17 passes` and names the one.
+  #
+  # This job is expected to be red today, on `apps/cli` alone, and that is the point: the
+  # CLI's `test` script is red on purpose until its tests exist. Making it green with
+  # `passWithNoTests` would be a lie told to a dashboard.
   # ---------------------------------------------------------------------------
-  build:
-    name: Build
+  package-scripts:
+    name: per-package test scripts
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Enable Corepack
-        run: corepack enable
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
 
-      - name: Activate the pinned pnpm
-        run: corepack prepare --activate
-
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Build
+      - name: Build dependencies
         run: pnpm build
+
+      - name: test, package by package
+        run: pnpm -r --no-bail test

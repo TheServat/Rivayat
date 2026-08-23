@@ -12,7 +12,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "typecheck": "turbo run typecheck",
+    "typecheck": "turbo run typecheck --continue=dependencies-successful",
     "lint": "node --max-old-space-size=8192 ./node_modules/eslint/bin/eslint.js .",
     "lint:fix": "node --max-old-space-size=8192 ./node_modules/eslint/bin/eslint.js . --fix",
     "format": "prettier --write .",
@@ -22,7 +22,9 @@
     "test:cov": "vitest run --coverage",
     "arch:check": "depcruise packages apps --config .dependency-cruiser.cjs",
     "arch:graph": "depcruise packages apps --config .dependency-cruiser.cjs --output-type archi > docs/generated/deps.dot",
-    "verify": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run arch:check && pnpm run test",
+    "determinism:check": "node tools/scripts/determinism-scan.mjs",
+    "ci:check": "node tools/scripts/verify-drift-check.mjs",
+    "verify": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run arch:check && pnpm run determinism:check && pnpm run test:cov",
     "clean": "turbo run clean && rimraf .turbo coverage",
     "prepare": "husky || true"
   },

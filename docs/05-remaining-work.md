@@ -120,9 +120,56 @@ Reported by the agents that hit them, deferred at the time, still open.
 - [x] Flaky provider test: an abort-latency assertion budgeted 100 ms of wall clock and
       lost under four-way workspace concurrency. Rebudgeted to 400 ms — still below the
       500 ms `initialBackoffMs` floor it exists to catch, so the property is intact
-- [~] CI: GitHub Actions running `pnpm verify`, `arch:check`, coverage floors and the
-  determinism scan
-- [~] Coverage thresholds enforced rather than observed
+- [x] CI: `.github/workflows/ci.yml`, the `verify` workflow, on push and PR, matrixed
+      over `ubuntu-latest` and `windows-latest` with `fail-fast: false`. It runs the six
+      `pnpm verify` steps individually, then `pnpm build`, then a second job running
+      `pnpm -r --no-bail test`. `tools/scripts/verify-drift-check.mjs` fails the build if
+      that list ever stops matching `package.json`. Reasoning and rejected options:
+      [ADR-0007](adr/ADR-0007-ci-on-github-actions.md)
+- [x] Coverage thresholds enforced rather than observed, and **per package** rather than
+      one workspace average. `vitest.config.ts` generates one threshold glob per package
+      from the filesystem, so a new package is enforced from its first commit instead of
+      inheriting the average. Verified to fail: raising `shared-kernel` to the 100 % tier
+      produced three `does not meet threshold` errors and exit 1
+- [x] Determinism scan (`pnpm determinism:check`): an AST walk over every
+      `packages/*/src` and `apps/*/src` that fails on `Date.now()`, `Math.random()`,
+      zero-argument `new Date()`, `performance.now()`, `process.hrtime()` and the
+      `node:crypto` entropy calls. Three boundary files are allowlisted per symbol, with
+      reasons. Verified to fail: a planted probe produced three violations and exit 1,
+      while the same file's `new Date(iso)`, its prose comment naming both calls, and its
+      `// determinism-allow:` line were correctly not flagged
+- [x] `pnpm typecheck` now passes `--continue=dependencies-successful`. It reported one
+      failing package before and reports three now — the other two were hidden behind it
+- [ ] **`CLAUDE.md` §4 is now out of date.** It describes `pnpm verify` as
+      "format + lint + typecheck + arch + test"; it is
+      `format:check → lint → typecheck → arch:check → determinism:check → test:cov`.
+      Only the project owner edits `CLAUDE.md`
+
+### What the new CI catches today
+
+Found by running the workflow's exact step sequence locally on 2026-08-23. None of these
+is caused by the CI work; all are in code being written right now.
+
+- [ ] **`packages/export-kit/src/registry.spec.ts:239`** calls `walk('src')`, a path
+      relative to `process.cwd()`. It passes under `cd packages/export-kit && npx vitest run`
+      and fails under the root `pnpm test`, where cwd is the repo root:
+      `ENOENT: scandir 'D:\me\story\src'`. Resolve it from `import.meta.url` instead. This
+      is the only test failing in the root run — 1 of 5,073
+- [ ] **`pnpm typecheck`** fails in `@rv/api`: `pipeline-runner.service.ts` and
+      `repositories.spec.ts` build checkpoint rows that no longer match the persistence
+      row type, which gained fields
+- [ ] **`pnpm lint`** fails with 18 errors and 1 warning across twelve files — nine in
+      `apps/cli` (unsafe `any` flow in `commands/models.ts`, redundant type assertions, a
+      duplicated union constituent), one in `apps/api`, two in `persistence` specs
+- [ ] **`pnpm format:check`** fails on 24 files. `pnpm format` fixes all of them
+- [ ] `apps/cli/vitest.config.ts` has no `name`, so it is the one project whose failures
+      are not labelled in the root run (CLAUDE.md §3 requires one)
+- [ ] `playwright.config.ts` at the repo root is a zero-byte file. Either it is a
+      leftover — `apps/web/playwright.config.ts` is the real one — or it is unfinished
+- [ ] Coverage counts only files a test loaded; there is no `coverage.include`. A source
+      file that no test imports is invisible rather than 0 %, which is why `apps/cli` has
+      no row at all. Setting `include` would make the floors honest and would put
+      `apps/cli` at 0 % on the same day — worth doing together with its first tests
 
 ## W8 — The proof
 
