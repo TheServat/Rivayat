@@ -1,0 +1,445 @@
+/*
+ * Design tokens — two layers, one file.
+ *
+ * Layer 1 is the **primitive** ramps: `--rv-slate-600`, `--rv-lapis-400`. Named for
+ * what they are. Authored in `oklch()` because equal steps of L are equal perceptual
+ * steps, which is what makes a ramp look like a ramp instead of a list of swatches.
+ * Chroma falls at both ends of every ramp: near-white and near-black cannot hold
+ * saturation, and pushing it produces an out-of-gamut colour the browser silently
+ * clips into a flat spot. `tokens.spec.ts` asserts every step is inside sRGB.
+ *
+ * Layer 2 is the **semantic** tokens: `--rv-color-accent`, `--rv-color-text-muted`.
+ * Named for what they do. Components reference only these. A component that writes
+ * `var(--rv-lapis-600)` has hard-coded a decision it does not own; a component that
+ * writes `var(--rv-color-accent)` themes correctly forever. That split is also why a
+ * screen nobody edited — the generated settings form — inherits this redesign without
+ * a line changing in it.
+ *
+ * Dark redefines **only** layer 2. The primitives are the same in both themes.
+ *
+ * Theming has three states and all three are handled:
+ *   - no `data-theme`      -> follow the OS, via `prefers-color-scheme`
+ *   - `data-theme="light"` -> light, even on a dark OS
+ *   - `data-theme="dark"`  -> dark, even on a light OS
+ *
+ * ── the palette, and why these hues ─────────────────────────────────────────
+ *
+ * Rivayat makes animated series out of printed and hand-made media: cut paper, ink,
+ * woodblock, gouache. The two things every one of those shares are *registration* —
+ * separately-made layers brought into alignment — and the Persian illuminated page,
+ * which is lapis and gold on tinted paper. So:
+ *
+ *   slate     258°  the paper. A cool blue-grey, not cream: this is the back of a
+ *                   light table, not a paperback. Carries 0.002–0.021 chroma so it
+ *                   sits under the accent rather than beside it.
+ *   lapis     264°  the primary. Actions, links, focus, the active section.
+ *   saffron    82°  the mark. Registration crosses, the style lock, the one thing on
+ *                   a screen that must be found. Doubles as `warning`, because an
+ *                   ochre warning belongs to the same ramp instead of importing a
+ *                   seventh hue.
+ *   madder     28°  danger. The pomegranate red of the same manuscript tradition.
+ *   verdigris 163°  success. Malachite, desaturated so it never out-shouts saffron.
+ *   steel     234°  info. A blueprint blue, far enough from lapis (30°) to read as a
+ *                   different thing in a badge.
+ *
+ * Every pair this interface actually renders is measured against WCAG 2.2 AA in
+ * `tokens.spec.ts` — 4.5:1 for text, 3:1 for control boundaries and focus — by
+ * converting these OKLCH values to sRGB and computing the real ratio. Contrast is a
+ * property of a *pair*, so the test asserts pairs, not colours.
+ */
+
+:root {
+  /* ══ layer 1: primitives ══════════════════════════════════════════════════ */
+
+  /* slate — the neutral. Not grey: 258° at low chroma, so it sits under lapis
+     without the dead flatness of #808080 next to a coloured accent. */
+  --rv-slate-25: oklch(0.992 0.002 258);
+  --rv-slate-50: oklch(0.982 0.004 258);
+  --rv-slate-100: oklch(0.965 0.006 258);
+  --rv-slate-200: oklch(0.936 0.009 258);
+  --rv-slate-300: oklch(0.878 0.012 258);
+  --rv-slate-400: oklch(0.79 0.014 258);
+  --rv-slate-500: oklch(0.7 0.016 258);
+  --rv-slate-550: oklch(0.615 0.018 258);
+  --rv-slate-600: oklch(0.518 0.019 258);
+  --rv-slate-700: oklch(0.455 0.02 258);
+  --rv-slate-800: oklch(0.385 0.021 258);
+  --rv-slate-850: oklch(0.3 0.021 258);
+  --rv-slate-900: oklch(0.24 0.021 258);
+  --rv-slate-925: oklch(0.212 0.021 258);
+  --rv-slate-950: oklch(0.178 0.02 258);
+  --rv-slate-975: oklch(0.145 0.019 258);
+
+  /* lapis — the primary. */
+  --rv-lapis-50: oklch(0.975 0.01 264);
+  --rv-lapis-100: oklch(0.945 0.024 264);
+  --rv-lapis-200: oklch(0.895 0.045 264);
+  --rv-lapis-300: oklch(0.82 0.075 264);
+  --rv-lapis-400: oklch(0.7 0.11 264);
+  --rv-lapis-500: oklch(0.59 0.15 264);
+  --rv-lapis-600: oklch(0.5 0.168 264);
+  --rv-lapis-700: oklch(0.425 0.148 264);
+  --rv-lapis-800: oklch(0.335 0.112 264);
+  --rv-lapis-900: oklch(0.255 0.078 264);
+  --rv-lapis-950: oklch(0.195 0.055 264);
+
+  /* saffron — the registration mark, and warning. */
+  --rv-saffron-50: oklch(0.982 0.012 82);
+  --rv-saffron-100: oklch(0.955 0.034 82);
+  --rv-saffron-200: oklch(0.915 0.062 82);
+  --rv-saffron-300: oklch(0.865 0.092 82);
+  --rv-saffron-400: oklch(0.8 0.12 82);
+  --rv-saffron-500: oklch(0.72 0.132 82);
+  --rv-saffron-600: oklch(0.628 0.122 82);
+  --rv-saffron-700: oklch(0.535 0.105 82);
+  --rv-saffron-800: oklch(0.428 0.084 82);
+  --rv-saffron-900: oklch(0.32 0.06 82);
+  --rv-saffron-950: oklch(0.228 0.04 82);
+
+  /* madder — danger. */
+  --rv-madder-50: oklch(0.975 0.01 28);
+  --rv-madder-100: oklch(0.945 0.026 28);
+  --rv-madder-200: oklch(0.898 0.048 28);
+  --rv-madder-300: oklch(0.828 0.082 28);
+  --rv-madder-400: oklch(0.715 0.125 28);
+  --rv-madder-500: oklch(0.615 0.165 28);
+  --rv-madder-600: oklch(0.528 0.175 28);
+  --rv-madder-700: oklch(0.448 0.152 28);
+  --rv-madder-800: oklch(0.355 0.118 28);
+  --rv-madder-900: oklch(0.268 0.082 28);
+  --rv-madder-950: oklch(0.202 0.055 28);
+
+  /* verdigris — success. */
+  --rv-verdigris-50: oklch(0.975 0.011 163);
+  --rv-verdigris-100: oklch(0.945 0.026 163);
+  --rv-verdigris-200: oklch(0.898 0.046 163);
+  --rv-verdigris-300: oklch(0.828 0.07 163);
+  --rv-verdigris-400: oklch(0.715 0.095 163);
+  --rv-verdigris-500: oklch(0.625 0.105 163);
+  --rv-verdigris-600: oklch(0.532 0.1 163);
+  --rv-verdigris-700: oklch(0.448 0.086 163);
+  --rv-verdigris-800: oklch(0.355 0.068 163);
+  --rv-verdigris-900: oklch(0.268 0.048 163);
+  --rv-verdigris-950: oklch(0.202 0.034 163);
+
+  /* steel — info. */
+  --rv-steel-50: oklch(0.975 0.01 234);
+  --rv-steel-100: oklch(0.945 0.026 234);
+  --rv-steel-200: oklch(0.898 0.048 234);
+  --rv-steel-300: oklch(0.825 0.076 234);
+  --rv-steel-400: oklch(0.712 0.1 234);
+  --rv-steel-500: oklch(0.618 0.108 234);
+  --rv-steel-600: oklch(0.522 0.104 234);
+  --rv-steel-700: oklch(0.445 0.091 234);
+  --rv-steel-800: oklch(0.352 0.074 234);
+  --rv-steel-900: oklch(0.265 0.054 234);
+  --rv-steel-950: oklch(0.198 0.038 234);
+
+  /* ══ layer 2: semantics — light ════════════════════════════════════════════
+     Light mode stacks *downward*: the page is the darkest plane and a card sits on
+     top of it, lighter. Elevation is carried by a shadow. Dark mode inverts the
+     mechanism, not just the numbers — see the dark block. */
+
+  --rv-color-canvas: var(--rv-slate-100);
+  --rv-color-surface: var(--rv-slate-50);
+  --rv-color-surface-raised: var(--rv-slate-25);
+  --rv-color-surface-sunken: var(--rv-slate-200);
+
+  --rv-color-border: var(--rv-slate-300);
+  /* `border-strong` is the *boundary of a control* — an input, a select, a button
+     outline. WCAG 2.2 puts that at 3:1 against its background, which is darker than
+     most design systems draw a border. It is measured, not guessed. */
+  --rv-color-border-strong: var(--rv-slate-550);
+  /* The peg rail: the hairline the navigation hangs from. A step stronger than
+     `border`, because it is structure rather than a divider — it is the thing the
+     sections are punched onto. */
+  --rv-color-rail: var(--rv-slate-400);
+  /* The lit edge of a piece of cut paper. One pixel, block-start only. */
+  --rv-color-cut: var(--rv-slate-25);
+
+  --rv-color-text: var(--rv-slate-900);
+  --rv-color-text-muted: var(--rv-slate-700);
+  --rv-color-text-faint: var(--rv-slate-600);
+  --rv-color-text-inverse: var(--rv-slate-50);
+
+  --rv-color-accent: var(--rv-lapis-600);
+  --rv-color-accent-hover: var(--rv-lapis-700);
+  --rv-color-accent-soft: var(--rv-lapis-100);
+  --rv-color-accent-line: var(--rv-lapis-200);
+  --rv-color-accent-text: var(--rv-slate-25);
+
+  /* The mark. Saffron is never body text — `mark-strong` is the readable one. */
+  --rv-color-mark: var(--rv-saffron-600);
+  --rv-color-mark-strong: var(--rv-saffron-800);
+  --rv-color-mark-soft: var(--rv-saffron-100);
+
+  --rv-color-danger: var(--rv-madder-700);
+  --rv-color-danger-soft: var(--rv-madder-100);
+  --rv-color-warning: var(--rv-saffron-800);
+  --rv-color-warning-soft: var(--rv-saffron-100);
+  --rv-color-success: var(--rv-verdigris-700);
+  --rv-color-success-soft: var(--rv-verdigris-100);
+  --rv-color-info: var(--rv-steel-700);
+  --rv-color-info-soft: var(--rv-steel-100);
+
+  --rv-color-focus-ring: var(--rv-lapis-600);
+
+  --rv-color-skeleton: var(--rv-slate-200);
+  --rv-color-skeleton-sheen: var(--rv-slate-100);
+
+  --rv-color-shadow: oklch(0.24 0.021 258 / 10%);
+
+  --rv-shadow-sm: 0 1px 2px var(--rv-color-shadow);
+  --rv-shadow-md: 0 2px 4px var(--rv-color-shadow), 0 8px 20px var(--rv-color-shadow);
+  /* A sheet of paper laid on another: lit along the top cut, shadowed below. */
+  --rv-shadow-cut: inset 0 1px 0 var(--rv-color-cut), 0 1px 2px var(--rv-color-shadow);
+
+  /* ══ spacing ═══════════════════════════════════════════════════════════════
+     A 4px base. Named by step rather than by use, because "the gap between a label
+     and its control" is a decision a component makes, not a token. */
+  --rv-space-0: 0;
+  --rv-space-1: 0.25rem;
+  --rv-space-2: 0.5rem;
+  --rv-space-3: 0.75rem;
+  --rv-space-4: 1rem;
+  --rv-space-5: 1.5rem;
+  --rv-space-6: 2rem;
+  --rv-space-7: 3rem;
+  --rv-space-8: 4rem;
+  --rv-space-9: 6rem;
+
+  /* ══ typography ════════════════════════════════════════════════════════════
+     Vazirmatn Variable, self-hosted, for both scripts — `fa` and `en` share one face
+     so switching language does not reflow the page. The fallbacks are the Persian
+     faces actually installed where this runs: Tahoma on Windows, Noto Naskh Arabic on
+     Linux, Geeza Pro on macOS. `system-ui` is last because on a machine with no
+     Persian face it renders tofu, which is worse than any of the above.
+
+     The scale is set for **Persian first**. Vazirmatn's Arabic glyphs carry their
+     weight low and small relative to the em, with dots above and below that need air,
+     so a Latin-tuned 15px body and 1.5 leading reads cramped. Body is 1rem and the
+     default leading is 1.75. Latin at these values looks generous rather than broken,
+     which is the correct direction for the trade.
+
+     There is no italic and no small-caps token, because the Arabic script has neither
+     and faking them with a synthetic oblique mangles the joins. Emphasis is weight,
+     colour and size. */
+  --rv-font-sans:
+    'Vazirmatn Variable', Vazirmatn, 'Noto Naskh Arabic', 'Geeza Pro', Tahoma, 'Segoe UI',
+    system-ui, sans-serif;
+  --rv-font-mono:
+    'Cascadia Mono', 'SF Mono', 'DejaVu Sans Mono', 'Roboto Mono', ui-monospace, monospace;
+
+  --rv-text-2xs: 0.6875rem;
+  --rv-text-xs: 0.75rem;
+  --rv-text-sm: 0.8125rem;
+  --rv-text-md: 1rem;
+  --rv-text-lg: 1.1875rem;
+  --rv-text-xl: 1.5rem;
+  --rv-text-2xl: 2rem;
+  --rv-text-3xl: 2.75rem;
+
+  --rv-leading-tight: 1.35;
+  --rv-leading-snug: 1.55;
+  --rv-leading-normal: 1.75;
+  --rv-leading-loose: 2;
+
+  --rv-weight-light: 300;
+  --rv-weight-regular: 400;
+  --rv-weight-medium: 500;
+  --rv-weight-semibold: 600;
+  --rv-weight-bold: 700;
+  --rv-weight-black: 800;
+
+  /* Tracking is a Latin-only tool. Letter-spacing an Arabic word breaks the joins
+     between letters and turns one word into several — `base.css` applies these only
+     under `:lang(en)`, never globally. */
+  --rv-tracking-wide: 0.08em;
+
+  /* ══ radius ════════════════════════════════════════════════════════════════
+     Cut paper has a straight edge. Radii stay small so a card reads as a trimmed
+     sheet rather than a rounded app tile; only the pill (badges) is fully round. */
+  --rv-radius-xs: 0.125rem;
+  --rv-radius-sm: 0.25rem;
+  --rv-radius-md: 0.375rem;
+  --rv-radius-lg: 0.625rem;
+  --rv-radius-xl: 1rem;
+  --rv-radius-pill: 999px;
+
+  /* ══ borders ═══════════════════════════════════════════════════════════════ */
+  --rv-border-width: 1px;
+  --rv-focus-ring-width: 2px;
+  --rv-focus-ring-offset: 2px;
+
+  /* ══ motion ════════════════════════════════════════════════════════════════
+     Five durations, scaled to travel distance rather than to importance, and four
+     curves. `linear` appears nowhere: nothing a person reads as an object moves at a
+     constant speed.
+
+     `--rv-step-2s` is the house dialect. Traditional animation holds a drawing for
+     two frames — "on 2s" — so a 24fps film shows 12 distinct images a second. Every
+     *machine-driven* loop in this interface (skeleton sweep, the busy mark) advances
+     in discrete steps at that rate instead of interpolating; every *user-driven*
+     movement interpolates smoothly. The interface animates the way the product does.
+     Six steps over 0.5s is 12 per second exactly. */
+  --rv-duration-instant: 90ms;
+  --rv-duration-fast: 140ms;
+  --rv-duration-normal: 220ms;
+  --rv-duration-slow: 340ms;
+  --rv-duration-deliberate: 560ms;
+
+  --rv-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --rv-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --rv-ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --rv-ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+  --rv-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --rv-ease-register: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  --rv-step-2s: steps(6, jump-none);
+  --rv-step-2s-long: steps(12, jump-none);
+  --rv-stagger: 28ms;
+
+  /* The one duration reduced motion does *not* collapse. Removing the travel is the
+     point; removing the fade as well would make state changes silent, which is a
+     worse outcome than the movement it was meant to spare. Deliberately not named
+     `--rv-duration-*`, because everything under that prefix is required to collapse
+     and this one is required not to. */
+  --rv-fade-duration: 120ms;
+
+  /* ══ layout ════════════════════════════════════════════════════════════════ */
+  --rv-sidebar-width: 15.5rem;
+  --rv-topbar-height: 3.75rem;
+  --rv-content-max: 68rem;
+  --rv-rail-inset: 0.6875rem;
+
+  /* ══ z layers ══════════════════════════════════════════════════════════════ */
+  --rv-z-base: 0;
+  --rv-z-sticky: 10;
+  --rv-z-overlay: 100;
+}
+
+/*
+ * Dark, as the OS default. Guarded with `:not([data-theme='light'])` so an explicit
+ * light choice still wins on a dark machine.
+ *
+ * Three things change beyond the numbers:
+ *   1. Surfaces get *lighter* as they come forward. A shadow on a near-black page is
+ *      invisible, so elevation has to be carried by lightness.
+ *   2. Chroma drops by roughly a third. Lapis at 0.168 reads as confident on paper
+ *      and as radioactive on indigo.
+ *   3. Neither end is pure. The page is 0.178 L, not black; text is 0.965 L, not
+ *      white. Pure black maximises halation around light text and pure white is
+ *      glare. The ground keeps its 0.020 chroma, so dark mode is a deep indigo
+ *      night rather than a grey one — lapis and gold on a dark page is the
+ *      illuminated Persian manuscript this palette came from.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --rv-color-canvas: var(--rv-slate-950);
+    --rv-color-surface: var(--rv-slate-925);
+    --rv-color-surface-raised: var(--rv-slate-900);
+    --rv-color-surface-sunken: var(--rv-slate-975);
+
+    --rv-color-border: var(--rv-slate-850);
+    --rv-color-border-strong: var(--rv-slate-550);
+    --rv-color-rail: var(--rv-slate-800);
+    --rv-color-cut: var(--rv-slate-850);
+
+    --rv-color-text: var(--rv-slate-100);
+    --rv-color-text-muted: var(--rv-slate-400);
+    --rv-color-text-faint: var(--rv-slate-500);
+    --rv-color-text-inverse: var(--rv-slate-975);
+
+    --rv-color-accent: var(--rv-lapis-400);
+    --rv-color-accent-hover: var(--rv-lapis-300);
+    --rv-color-accent-soft: var(--rv-lapis-900);
+    --rv-color-accent-line: var(--rv-lapis-800);
+    --rv-color-accent-text: var(--rv-slate-975);
+
+    --rv-color-mark: var(--rv-saffron-400);
+    --rv-color-mark-strong: var(--rv-saffron-300);
+    --rv-color-mark-soft: var(--rv-saffron-950);
+
+    --rv-color-danger: var(--rv-madder-400);
+    --rv-color-danger-soft: var(--rv-madder-950);
+    --rv-color-warning: var(--rv-saffron-400);
+    --rv-color-warning-soft: var(--rv-saffron-950);
+    --rv-color-success: var(--rv-verdigris-400);
+    --rv-color-success-soft: var(--rv-verdigris-950);
+    --rv-color-info: var(--rv-steel-400);
+    --rv-color-info-soft: var(--rv-steel-950);
+
+    --rv-color-focus-ring: var(--rv-lapis-400);
+
+    --rv-color-skeleton: var(--rv-slate-850);
+    --rv-color-skeleton-sheen: var(--rv-slate-800);
+
+    --rv-color-shadow: oklch(0.06 0.01 258 / 45%);
+  }
+}
+
+/* Dark, chosen explicitly. Same values; a separate block so the toggle beats the OS.
+   `tokens.spec.ts` asserts the two blocks are byte-for-byte the same set. */
+:root[data-theme='dark'] {
+  --rv-color-canvas: var(--rv-slate-950);
+  --rv-color-surface: var(--rv-slate-925);
+  --rv-color-surface-raised: var(--rv-slate-900);
+  --rv-color-surface-sunken: var(--rv-slate-975);
+
+  --rv-color-border: var(--rv-slate-850);
+  --rv-color-border-strong: var(--rv-slate-550);
+  --rv-color-rail: var(--rv-slate-800);
+  --rv-color-cut: var(--rv-slate-850);
+
+  --rv-color-text: var(--rv-slate-100);
+  --rv-color-text-muted: var(--rv-slate-400);
+  --rv-color-text-faint: var(--rv-slate-500);
+  --rv-color-text-inverse: var(--rv-slate-975);
+
+  --rv-color-accent: var(--rv-lapis-400);
+  --rv-color-accent-hover: var(--rv-lapis-300);
+  --rv-color-accent-soft: var(--rv-lapis-900);
+  --rv-color-accent-line: var(--rv-lapis-800);
+  --rv-color-accent-text: var(--rv-slate-975);
+
+  --rv-color-mark: var(--rv-saffron-400);
+  --rv-color-mark-strong: var(--rv-saffron-300);
+  --rv-color-mark-soft: var(--rv-saffron-950);
+
+  --rv-color-danger: var(--rv-madder-400);
+  --rv-color-danger-soft: var(--rv-madder-950);
+  --rv-color-warning: var(--rv-saffron-400);
+  --rv-color-warning-soft: var(--rv-saffron-950);
+  --rv-color-success: var(--rv-verdigris-400);
+  --rv-color-success-soft: var(--rv-verdigris-950);
+  --rv-color-info: var(--rv-steel-400);
+  --rv-color-info-soft: var(--rv-steel-950);
+
+  --rv-color-focus-ring: var(--rv-lapis-400);
+
+  --rv-color-skeleton: var(--rv-slate-850);
+  --rv-color-skeleton-sheen: var(--rv-slate-800);
+
+  --rv-color-shadow: oklch(0.06 0.01 258 / 45%);
+}
+
+/*
+ * Reduced motion collapses the *travel*, not the feedback.
+ *
+ * The blanket `animation-duration: 0.01ms` rule is in `motion.css`; this block is the
+ * token half of it, so a component that reads `--rv-duration-normal` for a transform
+ * gets no transform at all rather than a shortened one. Opacity transitions are left
+ * alive at `--rv-duration-instant` further down the stylesheet: a fade communicates
+ * arrival and does not cause discomfort, and removing it would make state changes
+ * silent, which is worse than moving.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --rv-duration-instant: 1ms;
+    --rv-duration-fast: 1ms;
+    --rv-duration-normal: 1ms;
+    --rv-duration-slow: 1ms;
+    --rv-duration-deliberate: 1ms;
+    --rv-stagger: 0ms;
+  }
+}

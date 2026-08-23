@@ -1,0 +1,304 @@
+/*
+ * The motion system.
+ *
+ * One rule holds the whole thing together, and it comes from the product rather than
+ * from a style guide:
+ *
+ *   **The interface interpolates when a person drives it, and steps when the machine
+ *   does.**
+ *
+ * Traditional animation holds each drawing for two frames — "on 2s" — so a 24 fps film
+ * shows twelve distinct images a second. Rivayat's own animation is arithmetic over rig
+ * parameters at exactly that cadence. So anything the studio is doing *to* you — a
+ * skeleton waiting on a fetch, a run in progress — advances in discrete 12-per-second
+ * steps, and anything you are doing *to it* — hovering, pressing, navigating — moves
+ * continuously. After a minute in the app you can tell whether the machine is busy
+ * without reading a word, because busy things flicker on 2s and your own actions
+ * glide.
+ *
+ * Everything below moves `transform` and `opacity` only. Both are composited, so a
+ * page-load sequence with a dozen participants never touches layout.
+ *
+ * Every one-shot entrance fills `backwards`, never `forwards`. These keyframes declare
+ * only a `from`, so the end state *is* the element's own style — and a forwards fill
+ * would freeze whatever that style happened to be at the moment the animation ended,
+ * which is how an element that later gains a hover transform stops responding to it.
+ *
+ * ── direction ───────────────────────────────────────────────────────────────
+ * `--rv-flip` is +1 in a left-to-right document and -1 in a right-to-left one. Any
+ * animation with horizontal travel multiplies by it, so "enters from the trailing
+ * edge" means the correct edge in Persian without a second keyframe set.
+ */
+
+:root {
+  --rv-flip: 1;
+}
+
+:root[dir='rtl'] {
+  --rv-flip: -1;
+}
+
+/* ── the vocabulary ─────────────────────────────────────────────────────────── */
+
+@keyframes rv-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Enters from below. The workhorse: headers, cards, panels. */
+@keyframes rv-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+}
+
+/*
+ * Off-register, then registered.
+ *
+ * A sheet dropped onto the peg bar arrives a few millimetres out and is pushed home.
+ * The overshoot in `--rv-ease-register` is that push. This is the movement the whole
+ * interface is built on, and every route change is one.
+ */
+@keyframes rv-register-in {
+  from {
+    opacity: 0;
+    transform: translate3d(calc(var(--rv-flip) * 0.75rem), 0.25rem, 0);
+  }
+}
+
+@keyframes rv-register-out {
+  to {
+    opacity: 0;
+    transform: translate3d(calc(var(--rv-flip) * -0.375rem), 0, 0);
+  }
+}
+
+/* The peg rail drawing itself down the sidebar. */
+@keyframes rv-rail-draw {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+/*
+ * The skeleton sweep — machine-driven, so it steps.
+ *
+ * A sweep rather than a pulse on purpose: a large area changing brightness twelve
+ * times a second is a photosensitivity hazard, while the same cadence applied to a
+ * band travelling across a shape is not.
+ */
+@keyframes rv-sweep {
+  from {
+    transform: translate3d(calc(var(--rv-flip) * -100%), 0, 0);
+  }
+
+  to {
+    transform: translate3d(calc(var(--rv-flip) * 220%), 0, 0);
+  }
+}
+
+/* The busy mark: twelve positions a second, like the frames it stands for. */
+@keyframes rv-tick {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── the signature: three plates coming into register ───────────────────────
+ *
+ * A woodblock or a screen print is made from one plate per colour, and the whole
+ * craft is getting them to land on the same spot. The Rivayat mark is that moment:
+ * a lapis plate, a saffron plate and the ink plate arrive apart and converge.
+ *
+ * It plays once, on load. Hovering the wordmark runs it in reverse as a transition —
+ * see `AppShell.vue` — so the one flourish in the interface is also the one thing you
+ * can pick up and put down.
+ */
+@keyframes rv-plate-a {
+  from {
+    opacity: 0;
+    transform: translate3d(-9%, -7%, 0) rotate(-6deg);
+  }
+
+  55% {
+    opacity: 1;
+  }
+}
+
+@keyframes rv-plate-b {
+  from {
+    opacity: 0;
+    transform: translate3d(8%, 6%, 0) rotate(5deg);
+  }
+
+  55% {
+    opacity: 1;
+  }
+}
+
+@keyframes rv-plate-ink {
+  from {
+    opacity: 0;
+    transform: scale(1.14);
+  }
+
+  40% {
+    opacity: 1;
+  }
+}
+
+/* ── the page-load sequence ─────────────────────────────────────────────────
+ *
+ * Runs once, on first paint, and establishes the reading order rather than
+ * decorating it: the mark registers, the header settles, the rail draws down, the
+ * sections arrive along it, and the content lands last. Total 0.72s — long enough to
+ * be a sequence, short enough that a returning user does not wait through it.
+ *
+ * `--rv-i` is the item's index, set inline by the component that owns the list.
+ */
+.rv-enter-header {
+  animation: rv-rise-in var(--rv-duration-slow) var(--rv-ease-decelerate) backwards;
+}
+
+.rv-enter-rail {
+  transform-origin: top center;
+  animation: rv-rail-draw var(--rv-duration-deliberate) var(--rv-ease-standard) 80ms backwards;
+}
+
+.rv-enter-item {
+  animation: rv-register-in var(--rv-duration-normal) var(--rv-ease-register) backwards;
+  animation-delay: calc(140ms + var(--rv-i, 0) * var(--rv-stagger));
+}
+
+.rv-enter-content {
+  animation: rv-rise-in var(--rv-duration-slow) var(--rv-ease-decelerate) 180ms backwards;
+}
+
+/* ── route transitions ──────────────────────────────────────────────────────
+ *
+ * Defined globally rather than in the shell's scoped block: Vue applies these classes
+ * to the *outgoing* and *incoming* view roots, and a scoped selector would have to
+ * pierce into a component it does not own to reach them.
+ *
+ * `out-in`, so the two screens never overlap and the eye is not asked to read two
+ * headings at once. The exit is 140ms against the entrance's 340ms — the user has
+ * already decided; do not make them wait to be rid of the old screen.
+ */
+.rv-route-enter-active {
+  animation: rv-register-in var(--rv-duration-slow) var(--rv-ease-register) backwards;
+}
+
+.rv-route-leave-active {
+  animation: rv-register-out var(--rv-duration-fast) var(--rv-ease-accelerate) both;
+}
+
+/*
+ * Where the browser supports it, the same navigation is handed to the View Transitions
+ * API instead, which can carry a *shared element* across the change — the section's
+ * registration mark travels from the sidebar into the heading rather than fading out
+ * of one place and into another. `AppShell.vue` adds `rv-vt` to the document when it
+ * takes that path, which switches the CSS animations above off so the two mechanisms
+ * never both run.
+ */
+:root.rv-vt .rv-route-enter-active,
+:root.rv-vt .rv-route-leave-active {
+  animation: none;
+}
+
+@supports (view-transition-name: none) {
+  /* Out, then in — the same order as the `out-in` fallback, and for the same reason:
+     a cross-fade puts two headings on screen at once and asks the reader to work out
+     which one is theirs. The entrance is delayed by exactly the exit's length, and the
+     group is given room for both. */
+  ::view-transition-group(rv-main) {
+    animation-duration: calc(var(--rv-duration-fast) + var(--rv-duration-slow));
+  }
+
+  ::view-transition-old(rv-main) {
+    animation: rv-register-out var(--rv-duration-fast) var(--rv-ease-accelerate) both;
+  }
+
+  ::view-transition-new(rv-main) {
+    animation: rv-register-in var(--rv-duration-slow) var(--rv-ease-register)
+      var(--rv-duration-fast) backwards;
+  }
+
+  /*
+   * The one shared element worth naming.
+   *
+   * The section marker exists on both sides of every navigation, so the browser can
+   * interpolate it: it *travels* from the old section to the new one instead of the
+   * whole sidebar cross-fading with a mark in two places. This is the payoff that
+   * justified reaching for the API at all — a CSS transition cannot do it, because
+   * during a view transition the live element is replaced by snapshots.
+   */
+  ::view-transition-group(rv-nav-mark) {
+    animation-duration: var(--rv-duration-slow);
+    animation-timing-function: var(--rv-ease-register);
+  }
+}
+
+/* ── swapping one glyph for another ─────────────────────────────────────────
+ *
+ * A control whose icon changes with its value — the theme switcher — should look like
+ * one control changing rather than two controls trading places. Out-in, so the two
+ * glyphs are never both present, with a quarter turn to say the change was a rotation
+ * of state and not a replacement.
+ */
+.rv-swap-enter-active,
+.rv-swap-leave-active {
+  transition:
+    opacity var(--rv-duration-instant) var(--rv-ease-standard),
+    transform var(--rv-duration-fast) var(--rv-ease-register);
+}
+
+.rv-swap-enter-from {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.6);
+}
+
+.rv-swap-leave-to {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.6);
+}
+
+/*
+ * ── reduced motion ─────────────────────────────────────────────────────────
+ *
+ * The blanket rule is the floor. What follows it is the actual intent: keep the state
+ * change, remove the travel. Everything that slid still fades, at a duration that
+ * survives the token collapse, because a change nobody can see is a worse outcome for
+ * an anxious or vestibular user than one that simply does not move.
+ *
+ * Looping motion is switched off entirely rather than shortened — a spinner running
+ * at 1ms per frame is a strobe.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .rv-enter-header,
+  .rv-enter-item,
+  .rv-enter-content,
+  .rv-route-enter-active,
+  ::view-transition-new(rv-main) {
+    animation: rv-fade-in var(--rv-fade-duration) var(--rv-ease-standard) backwards !important;
+  }
+
+  .rv-route-leave-active,
+  ::view-transition-old(rv-main) {
+    animation: rv-fade-in var(--rv-fade-duration) var(--rv-ease-standard) reverse both !important;
+  }
+
+  .rv-enter-rail {
+    animation: none !important;
+  }
+}

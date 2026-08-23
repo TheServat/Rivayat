@@ -1,0 +1,43 @@
+{
+  "name": "@rv/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Rivayat studio: a Persian-first, RTL-native Vue 3 client for the pipeline API. Contains no server code - it talks to apps/api over HTTP and SSE.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "clean": "rimraf dist .turbo coverage playwright-report test-results"
+  },
+  "dependencies": {
+    "@fontsource-variable/vazirmatn": "5.3.0",
+    "@phosphor-icons/vue": "2.2.1",
+    "@rv/contracts": "workspace:*",
+    "@rv/shared-kernel": "workspace:*",
+    "@vueuse/core": "14.4.0",
+    "pinia": "4.0.3",
+    "vue": "3.5.41",
+    "vue-i18n": "11.4.9",
+    "vue-router": "5.2.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "catalog:",
+    "@vitejs/plugin-vue": "6.0.8",
+    "@vitest/coverage-v8": "catalog:",
+    "@vue/test-utils": "2.4.11",
+    "eslint-import-resolver-node": "0.4.0",
+    "jsdom": "30.0.1",
+    "rimraf": "catalog:",
+    "typescript": "catalog:",
+    "vite": "8.2.2",
+    "vitest": "catalog:",
+    "vue-tsc": "3.3.11"
+  }
+}

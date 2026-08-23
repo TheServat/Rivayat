@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // vue-tsc owns the check; Vite owns the emit.
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+
+    // The browser half of the standard library. `types` is replaced rather than
+    // extended because the base list (`node`) is for packages that run on a server;
+    // `node` stays only so `vite/client` and `import.meta` type correctly under
+    // `moduleResolution: Bundler`.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client"],
+
+    // `.vue` is not a TS extension; vue-tsc needs to be told to look inside SFCs.
+    "jsx": "preserve",
+    "allowJs": false
+  },
+  // NOT listed here on purpose: `vite.config.ts`, `vitest.config.ts` and
+  // `playwright.config.ts`. `eslint.config.js` routes `apps/*/*.config.ts` through
+  // typescript-eslint's `allowDefaultProject`, and a file that is in *both* a project
+  // and `allowDefaultProject` is a hard error in the project service.
+  "include": ["env.d.ts", "src/**/*.ts", "src/**/*.vue", "e2e/**/*.ts"],
+  "exclude": ["dist", "node_modules", "coverage"]
+}

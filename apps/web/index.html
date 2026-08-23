@@ -1,0 +1,59 @@
+<!doctype html>
+<!--
+  `lang` and `dir` are the Persian defaults, set here rather than only in JavaScript so
+  the very first paint is already right-to-left. The locale store rewrites both on the
+  root element when the user switches; it never has to undo a left-to-right flash.
+-->
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>روایت — Rivayat</title>
+
+    <!--
+      The registration mark, as the tab icon.
+
+      Inline rather than a file: it is nine drawing commands, it has to be crisp at
+      16px, and a separate request for it is a request that can fail on the offline
+      machine this studio is expected to run on.
+    -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke-width='1.6'%3E%3Cg stroke='%23305bc1'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 .5v3M12 20.5v3M.5 12h3M20.5 12h3'/%3E%3C/g%3E%3Ccircle cx='12' cy='12' r='4.25' stroke='%23ad801a'/%3E%3Cg stroke='%23192029'%3E%3Cpath d='M12 4.5v15M4.5 12h15'/%3E%3C/g%3E%3Ccircle cx='12' cy='12' r='1.4' fill='%23192029'/%3E%3C/svg%3E"
+    />
+
+    <!--
+      The browser chrome follows the page. Both values are the `--rv-color-surface`
+      token in each theme; they are written literally because a meta tag cannot read a
+      custom property, and `tokens.css` remains the place they are decided.
+    -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9fc" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#131922" />
+
+    <script>
+      /*
+       * Applies the stored theme before the first paint.
+       *
+       * The theme store is the owner of this value and writes the same attribute the
+       * moment it mounts — but that is one frame after the browser has already painted
+       * the page, so a user who chose dark gets a white flash on every reload. Reading
+       * the same key here removes it. Deliberately tiny and deliberately silent: if the
+       * key is missing or has been hand-edited to nonsense, the attribute is not
+       * written and `prefers-color-scheme` decides, which is the same fallback the
+       * store applies.
+       */
+      try {
+        var rvTheme = localStorage.getItem('rv.theme');
+        if (rvTheme === 'dark' || rvTheme === 'light') {
+          document.documentElement.setAttribute('data-theme', rvTheme);
+        }
+      } catch (error) {
+        /* storage disabled; the OS preference is a fine answer */
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

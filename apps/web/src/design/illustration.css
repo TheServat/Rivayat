@@ -1,0 +1,181 @@
+/*
+ * The illustration language.
+ *
+ * Six screens in this studio are not built yet, and those are the screens the owner
+ * opens. Each one gets a drawing of what will live there — not a stock "empty box"
+ * graphic, and not a purple blob with floating rectangles, but a diagram made of the
+ * product's own material: cut shapes on registration marks, a dope-sheet track, a rig
+ * exploded into its parts.
+ *
+ * They share one vocabulary, defined here rather than in each component, so that eight
+ * illustrations read as one hand:
+ *
+ *   - a 200×132 field with printer's registration brackets at the corners, in saffron
+ *   - hairline strokes in the page's faint ink, with lapis for the thing being made
+ *     and saffron for the thing that is chosen, locked, or current
+ *   - flat fills only; nothing is shaded, because none of the eleven media Rivayat
+ *     imitates are shaded either
+ *   - parts arrive one at a time on load, in the order the pipeline would make them
+ *
+ * These classes are global on purpose. A scoped style cannot reach into slot content,
+ * and eight copies of the same palette is exactly how eight drawings stop matching.
+ */
+
+.rv-motif {
+  inline-size: 100%;
+  max-inline-size: 22rem;
+  block-size: auto;
+  color: var(--rv-color-text-faint);
+  overflow: visible;
+}
+
+/* Corner brackets: where the plate is clamped. The one element every drawing shares. */
+.rv-motif__reg {
+  fill: none;
+  stroke: var(--rv-color-mark);
+  stroke-width: 1.5;
+  stroke-linecap: square;
+}
+
+/* ── strokes and fills ──────────────────────────────────────────────────────── */
+
+.rv-m-stroke {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rv-m-line {
+  stroke: var(--rv-color-border-strong);
+}
+
+.rv-m-accent {
+  stroke: var(--rv-color-accent);
+}
+
+.rv-m-mark {
+  stroke: var(--rv-color-mark);
+}
+
+.rv-m-thin {
+  stroke-width: 0.75;
+}
+
+.rv-m-bold {
+  stroke-width: 2;
+}
+
+.rv-m-dash {
+  stroke-dasharray: 3 3;
+}
+
+.rv-m-fill-surface {
+  fill: var(--rv-color-surface);
+}
+
+.rv-m-fill-sunken {
+  fill: var(--rv-color-surface-sunken);
+}
+
+.rv-m-fill-soft {
+  fill: var(--rv-color-accent-soft);
+}
+
+.rv-m-fill-mark {
+  fill: var(--rv-color-mark-soft);
+}
+
+.rv-m-fill-accent {
+  fill: var(--rv-color-accent);
+}
+
+.rv-m-fill-gold {
+  fill: var(--rv-color-mark);
+}
+
+.rv-m-fill-ink {
+  fill: currentcolor;
+}
+
+.rv-m-quiet {
+  opacity: 0.55;
+}
+
+/* ── the build ──────────────────────────────────────────────────────────────
+ *
+ * Every direct child of the build group is one part of the drawing, and they land in
+ * order — the same way the pipeline makes them, and the same way the plates of a print
+ * go down. Ten steps is the cap; past that the last part arrives after the reader has
+ * already looked away.
+ */
+/*
+ * The diagrams mirror with the document.
+ *
+ * Half of these drawings encode a direction — time running forward, a rig exploding
+ * along its z axis, a pipeline stage following the one before it — and in Persian all
+ * of those run the other way. Mirroring the whole build group is the same trick the
+ * layout uses: one transform instead of a second set of coordinates, and the corner
+ * registration brackets are symmetric so they stay put.
+ */
+.rv-motif__build {
+  transform-box: view-box;
+  transform-origin: center;
+}
+
+:root[dir='rtl'] .rv-motif__build {
+  transform: scaleX(-1);
+}
+
+@keyframes rv-motif-part {
+  from {
+    opacity: 0;
+    transform: translate(2.5px, -2px) scale(0.985);
+  }
+}
+
+.rv-motif__build > * {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: rv-motif-part var(--rv-duration-slow) var(--rv-ease-register) backwards;
+}
+
+.rv-motif__build > :nth-child(1) {
+  animation-delay: 120ms;
+}
+
+.rv-motif__build > :nth-child(2) {
+  animation-delay: 168ms;
+}
+
+.rv-motif__build > :nth-child(3) {
+  animation-delay: 216ms;
+}
+
+.rv-motif__build > :nth-child(4) {
+  animation-delay: 264ms;
+}
+
+.rv-motif__build > :nth-child(5) {
+  animation-delay: 312ms;
+}
+
+.rv-motif__build > :nth-child(6) {
+  animation-delay: 360ms;
+}
+
+.rv-motif__build > :nth-child(7) {
+  animation-delay: 408ms;
+}
+
+.rv-motif__build > :nth-child(n + 8) {
+  animation-delay: 456ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rv-motif__build > * {
+    animation: rv-fade-in var(--rv-fade-duration) var(--rv-ease-standard) backwards !important;
+    animation-delay: 0ms !important;
+  }
+}

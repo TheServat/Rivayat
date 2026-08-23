@@ -1,0 +1,231 @@
+/*
+ * The baseline every component inherits.
+ *
+ * Two rules hold throughout this file and every component stylesheet:
+ *
+ * 1. **Logical properties only.** `inline-start`, not `left`. The studio runs
+ *    right-to-left by default, and a single `margin-left` is a bug that is invisible
+ *    in the direction the author was testing and broken in the one the owner uses.
+ *    `direction.spec.ts` scans the source and fails the build on a physical property.
+ *
+ * 2. **Tokens only.** No literal colour, no literal duration. Same spec fails the
+ *    build on a hex literal outside `tokens.css`.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  block-size: 100%;
+}
+
+html {
+  /* Tells the browser which form controls and scrollbars to paint. Without it, a
+     native `<select>` popup stays light on a dark page. */
+  color-scheme: light;
+  scrollbar-color: var(--rv-color-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme='light']) {
+    color-scheme: dark;
+  }
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background-color: var(--rv-color-canvas);
+  color: var(--rv-color-text);
+  font-family: var(--rv-font-sans);
+  font-size: var(--rv-text-md);
+  font-weight: var(--rv-weight-regular);
+  line-height: var(--rv-leading-normal);
+  -webkit-font-smoothing: antialiased;
+  /*
+   * No synthetic faces. The Arabic script has no italic and no small-caps, and a
+   * browser asked to fake either one shears the glyphs and breaks the joins between
+   * letters. Vazirmatn Variable carries real weights from 100 to 900, so nothing has
+   * to be invented.
+   */
+  font-synthesis: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+blockquote,
+dl,
+dd {
+  margin: 0;
+}
+
+/*
+ * Headings run tighter than body copy but nowhere near as tight as a Latin-only scale
+ * would set them: Persian carries dots below the baseline and above the x-height, and
+ * a 1.1 leading collides them across lines.
+ */
+h1,
+h2,
+h3,
+h4 {
+  line-height: var(--rv-leading-tight);
+  font-weight: var(--rv-weight-bold);
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+svg {
+  display: block;
+  flex: none;
+}
+
+/*
+ * One focus ring for the whole application. `:focus-visible` rather than `:focus`, so
+ * a pointer user is not shouted at, and it is never removed — a visible focus ring is
+ * non-optional here. A component that wants a different shape changes the radius, not
+ * the ring. Measured at 3:1 against every surface in `tokens.spec.ts`.
+ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--rv-focus-ring-width) solid var(--rv-color-focus-ring);
+  outline-offset: var(--rv-focus-ring-offset);
+  border-radius: var(--rv-radius-sm);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  /* Every interactive control clears WCAG 2.2 SC 2.5.8 by construction rather than by
+     each component remembering to. The padding is the target, not the glyph. */
+  min-block-size: 1.5rem;
+  min-inline-size: 1.5rem;
+}
+
+a {
+  color: var(--rv-color-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: color var(--rv-duration-instant) var(--rv-ease-standard);
+}
+
+a:hover {
+  color: var(--rv-color-accent-hover);
+}
+
+::selection {
+  background-color: var(--rv-color-accent-soft);
+  color: var(--rv-color-text);
+}
+
+/* ── utilities ───────────────────────────────────────────────────────────── */
+
+/*
+ * Numbers in tables and ledgers line up column-wise. Persian digits are proportional
+ * by default in most faces, and a cost column that jitters is a cost column nobody
+ * scans.
+ */
+.rv-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A section label.
+ *
+ * The Latin convention for one of these is uppercase with wide tracking. Neither
+ * exists in the Arabic script: Persian has no case at all, and letter-spacing an
+ * Arabic word severs the joins so that one word reads as several. So the treatment is
+ * *conditional on the language of the document*, which is the one place in this
+ * stylesheet where `fa` and `en` genuinely diverge — Persian gets weight and colour
+ * where English gets case and tracking.
+ */
+.rv-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rv-space-2);
+  font-size: var(--rv-text-xs);
+  font-weight: var(--rv-weight-bold);
+  color: var(--rv-color-text-faint);
+}
+
+:root:lang(en) .rv-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: var(--rv-tracking-wide);
+  font-weight: var(--rv-weight-semibold);
+}
+
+/* A trimmed sheet of paper laid on the page: lit along its top cut, shadowed below. */
+.rv-sheet {
+  background-color: var(--rv-color-surface);
+  border: var(--rv-border-width) solid var(--rv-color-border);
+  border-radius: var(--rv-radius-lg);
+  box-shadow: var(--rv-shadow-cut);
+}
+
+.rv-mono {
+  font-family: var(--rv-font-mono);
+  font-size: var(--rv-text-xs);
+  letter-spacing: 0;
+}
+
+/* Visible only to assistive technology. Used for labels a sighted user reads from
+   context but a screen reader cannot. */
+.rv-visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip link: the first thing keyboard focus reaches, invisible until it has focus. */
+.rv-skip-link {
+  position: absolute;
+  inset-block-start: var(--rv-space-2);
+  inset-inline-start: var(--rv-space-2);
+  z-index: var(--rv-z-overlay);
+  padding: var(--rv-space-2) var(--rv-space-4);
+  background-color: var(--rv-color-surface);
+  color: var(--rv-color-text);
+  border: var(--rv-border-width) solid var(--rv-color-border-strong);
+  border-radius: var(--rv-radius-md);
+  box-shadow: var(--rv-shadow-md);
+  text-decoration: none;
+  transform: translateY(-250%);
+  transition: transform var(--rv-duration-fast) var(--rv-ease-decelerate);
+}
+
+.rv-skip-link:focus-visible {
+  transform: translateY(0);
+}
