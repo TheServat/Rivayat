@@ -30,11 +30,13 @@
     "@rv/shared-kernel": "workspace:*",
     "@rv/contracts": "workspace:*",
     "@rv/anim-engine": "workspace:*",
+    "maxrects-packer": "2.7.3",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "rimraf": "catalog:",
+    "sharp": "0.35.3",
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

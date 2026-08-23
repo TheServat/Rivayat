@@ -27,10 +27,13 @@
     "clean": "rimraf dist .turbo"
   },
   "dependencies": {
+    "@napi-rs/canvas": "1.0.7",
     "@rv/shared-kernel": "workspace:*",
     "@rv/contracts": "workspace:*",
     "@rv/core-domain": "workspace:*",
     "@rv/anim-engine": "workspace:*",
+    "playwright": "1.62.1",
+    "sharp": "0.35.3",
     "zod": "catalog:"
   },
   "devDependencies": {

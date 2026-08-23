@@ -146,6 +146,12 @@ export default tseslint.config(
   {
     files: ['**/*.js', '**/*.mjs', '**/*.cjs'],
     ...tseslint.configs.disableTypeChecked,
+    rules: {
+      ...tseslint.configs.disableTypeChecked.rules,
+      // Plain JS has no types to declare. Demanding an annotation here only produces
+      // JSDoc written to satisfy a linter.
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
+    },
   },
 
   prettier,
