@@ -34,11 +34,14 @@
     "@rv/providers": "workspace:*",
     "@rv/asset-registry": "workspace:*",
     "@rv/anim-engine": "workspace:*",
+    "@huggingface/transformers": "4.2.0",
+    "maxrects-packer": "2.7.3",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "rimraf": "catalog:",
+    "sharp": "0.35.3",
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
