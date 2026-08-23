@@ -1,8 +1,11 @@
 # `txt2img-flux-schnell-parts-sheet.json`
 
 The same FLUX.1-schnell base as [`txt2img-flux-schnell-draft.json`](txt2img-flux-schnell-draft.md),
-with a fixed **layout scaffold** in the positive prompt. Remote lane only (Colab T4) — FLUX does
-not fit on the 6 GB local card.
+with a fixed **layout scaffold** in the positive prompt. Optional remote lane only (a Colab GPU) —
+FLUX does not fit on the 6 GB local card. **This is the GGUF-loader file — the T4 and A100 path**;
+on an L4 or H100 use
+[`txt2img-flux-schnell-fp8-parts-sheet.json`](txt2img-flux-schnell-fp8-parts-sheet.md), which is
+the identical scaffold on core loaders.
 
 **This file exists to test one specific claim.** The SD 1.5 parts sheet
 ([`txt2img-lcm-parts-sheet.md`](txt2img-lcm-parts-sheet.md)) decomposes props well but

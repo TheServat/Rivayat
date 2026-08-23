@@ -1,8 +1,10 @@
 # `txt2img-flux-schnell-draft.json`
 
-The plain FLUX.1-schnell draft, for the **remote** lane only. FLUX does not fit on the 6 GB
-Quadro RTX 3000; this workflow exists for the Colab T4 (~15 GB) described in
-[`tools/colab/README.md`](../colab/README.md).
+The plain FLUX.1-schnell draft, for the **optional remote** lane only. FLUX does not fit on the 6 GB
+Quadro RTX 3000; this workflow exists for the Colab GPUs described in
+[`tools/colab/README.md`](../colab/README.md). **This is the GGUF-loader file — the T4 and A100
+path.** On an L4 or H100 use [`txt2img-flux-schnell-fp8-draft.json`](txt2img-flux-schnell-fp8-draft.md)
+instead.
 
 > **Nothing in this file has been run.** ComfyUI-GGUF is not installed on the local machine
 > (`--disable-all-custom-nodes`), and FLUX does not fit on 6 GB. What _has_ been verified is the
@@ -32,8 +34,15 @@ A T4 is **compute capability 7.5** (Turing). fp8 needs **8.9** (Ada/Hopper). The
 `flux1-schnell-fp8.safetensors` is therefore the wrong file for this hardware. GGUF weights are
 dequantised to fp16 on the fly, and fp16 is exactly what Turing does well.
 
-`Q4_K_S` (6.78 GB) is the default. `Q5_K_S` (8.26 GB) also fits a T4 and is the upgrade if quality
-disappoints — change `{{unet}}` and add it to the notebook's catalog.
+`Q4_K_S` (6.78 GB) is what fits alongside T5 in a T4's ~15 GB. On a bigger card the notebook pulls
+**`Q8_0` (12.69 GB)** into this same graph instead — near-fp16 quality, no workflow change.
+
+**This still holds on an A100**, which surprises people: an A100 is **8.0** (Ampere), so it has
+bf16 but _no fp8 path either_. Only **L4 (8.9)** and **H100 (9.0)** can load the fp8 file, and for
+those there is a separate graph —
+[`txt2img-flux-schnell-fp8-draft.json`](txt2img-flux-schnell-fp8-draft.md) — because fp8
+safetensors need core `UNETLoader`/`DualCLIPLoader` rather than the GGUF loaders. The notebook's
+`FLUX_VARIANT='auto'` reads `nvidia-smi` and picks for you.
 
 ## What is fixed and what the caller owns
 

@@ -1,0 +1,100 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "FLUX.1-schnell transformer, safetensors - core node, no custom node needed"
+    },
+    "inputs": {
+      "unet_name": "{{unet}}",
+      "weight_dtype": "{{weight_dtype}}"
+    }
+  },
+  "2": {
+    "class_type": "DualCLIPLoader",
+    "_meta": {
+      "title": "T5-XXL + CLIP-L - the 512-token encoder pair FLUX conditions on"
+    },
+    "inputs": {
+      "clip_name1": "{{t5}}",
+      "clip_name2": "{{clip_l}}",
+      "type": "flux"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "FLUX 16-channel autoencoder"
+    },
+    "inputs": {
+      "vae_name": "{{vae}}"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive — subject + parts-sheet layout scaffold, stated positively (there is no negative on schnell)"
+    },
+    "inputs": {
+      "clip": ["2", 0],
+      "text": "A technical parts sheet on a plain flat {{background}} background, drawn in the style of {{style}}. The subject is {{prompt}}, and it has been taken completely apart. Exactly these {{grid_cols}} times {{grid_rows}} separate components are shown, one per cell, arranged in a strict {{grid_cols}}-column by {{grid_rows}}-row grid, reading left to right and top to bottom: {{parts}}. Every component floats entirely on its own with a wide empty margin of bare {{background}} background all around it. No component touches, overlaps, or connects to any other component. The subject is never shown assembled. Orthographic front view, even flat lighting, no cast shadows, no ground plane, no scenery, no text, no labels, no numbers."
+    }
+  },
+  "5": {
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Negative — zeroed. schnell runs at cfg 1.0, so this workflow deliberately has no negative placeholder; see the sibling .md"
+    },
+    "inputs": {
+      "conditioning": ["4", 0]
+    }
+  },
+  "6": {
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "Sheet canvas — aspect should follow grid_cols:grid_rows"
+    },
+    "inputs": {
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "batch_size": "{{batch_size}}"
+    }
+  },
+  "7": {
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "schnell sampler — 4 steps, cfg 1.0, euler/simple"
+    },
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["6", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": 1
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Decode"
+    },
+    "inputs": {
+      "samples": ["7", 0],
+      "vae": ["3", 0]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save"
+    },
+    "inputs": {
+      "images": ["8", 0],
+      "filename_prefix": "{{filename_prefix}}"
+    }
+  }
+}

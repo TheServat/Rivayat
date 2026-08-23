@@ -13,23 +13,36 @@ to a paid model only when an asset is locked.
 | [`txt2img-lcm-parts-sheet.json`](txt2img-lcm-parts-sheet.json) · [docs](txt2img-lcm-parts-sheet.md) | Subject decomposed into separated components on a neutral field (research §3). |
 | [`img2img-lcm-variant.json`](img2img-lcm-variant.json) · [docs](img2img-lcm-variant.md)             | Colourway / season / damage variant at low denoise.                            |
 
-**Remote lane (Colab T4, ~15 GB) — see [`tools/colab/`](../colab/README.md).** Those three files
-are **not** SD-1.5-specific: their node graph
+**Optional remote lane (a Colab GPU — T4 / L4 / A100) — see
+[`tools/colab/`](../colab/README.md).** Colab is never required: the local lane above and the cloud
+API lane each run the pipeline end to end on their own. Those three files are **not**
+SD-1.5-specific: their node graph
 (`CheckpointLoaderSimple → LoraLoader → CLIPTextEncode → EmptyLatentImage → KSampler`) has no
 version-dependent input, so **SDXL runs on them unchanged** — just pass
 `{{checkpoint}} = sd_xl_base_1.0.safetensors`, `{{lora}} = lcm-lora-sdxl.safetensors` and 1024².
 _(Reasoned from the node signatures; not run — no SDXL model fits on 6 GB.)_
 
 FLUX cannot reuse them: it needs three separate loaders, a 16-channel `EmptySD3LatentImage`, and it
-is guidance-distilled so the negative prompt is inert. Hence two new files, remote lane only:
+is guidance-distilled so the negative prompt is inert. Hence four new files, remote lane only — the
+same graph twice, once per loader family, because **which one you want depends on the GPU Colab
+gives you**:
 
-| File                                                                                                                           | Purpose                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| [`txt2img-flux-schnell-draft.json`](txt2img-flux-schnell-draft.json) · [docs](txt2img-flux-schnell-draft.md)                   | FLUX.1-schnell draft, GGUF (a T4 is compute capability 7.5 — **no fp8**). 4 steps, cfg 1.0. |
-| [`txt2img-flux-schnell-parts-sheet.json`](txt2img-flux-schnell-parts-sheet.json) · [docs](txt2img-flux-schnell-parts-sheet.md) | The §7.2 experiment: does a **T5-XXL** encoder decompose characters where CLIP-L cannot?    |
+| File                                                                                                                                       | Purpose                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| [`txt2img-flux-schnell-draft.json`](txt2img-flux-schnell-draft.json) · [docs](txt2img-flux-schnell-draft.md)                               | FLUX.1-schnell draft, **GGUF loaders**. The **T4** (cc 7.5, no fp8) and **A100** (cc 8.0, also no fp8) path. |
+| [`txt2img-flux-schnell-parts-sheet.json`](txt2img-flux-schnell-parts-sheet.json) · [docs](txt2img-flux-schnell-parts-sheet.md)             | The §7.2 experiment, GGUF: does a **T5-XXL** encoder decompose characters where CLIP-L cannot?               |
+| [`txt2img-flux-schnell-fp8-draft.json`](txt2img-flux-schnell-fp8-draft.json) · [docs](txt2img-flux-schnell-fp8-draft.md)                   | The same draft on **core `UNETLoader` + `DualCLIPLoader`**. The **L4 / H100** fp8 path (cc ≥ 8.9).           |
+| [`txt2img-flux-schnell-fp8-parts-sheet.json`](txt2img-flux-schnell-fp8-parts-sheet.json) · [docs](txt2img-flux-schnell-fp8-parts-sheet.md) | The same experiment, fp8.                                                                                    |
 
-Both were validated against the live local ComfyUI 0.33.0 (links, socket indices and input names all
-correct) but **have never been executed** — FLUX does not fit on this card. Details in each doc.
+**fp8 needs compute capability 8.9** (Ada/Hopper). A T4 is 7.5 and an **A100 is 8.0** — the biggest
+card Colab hands out still cannot load an fp8 checkpoint, so it uses GGUF `Q8_0`. The fp8 pair has a
+second advantage: both loaders are **core ComfyUI**, so it does not need the `ComfyUI-GGUF` custom
+node at all.
+
+All four were validated against the live local ComfyUI 0.33.0 — with the loaders stubbed to a local
+checkpoint's MODEL/CLIP/VAE, `POST /prompt` returned `node_errors: {}`; unstubbed, the only errors
+were `value_not_in_list` on the missing weight files. **None has ever been executed** — FLUX does not
+fit on this card, and fp8 cannot run on it at all (cc 7.5). Details in each doc.
 
 ---
 

@@ -159,30 +159,73 @@ produces pure RGB noise.
 
 Promote to a paid model only when an asset is locked.
 
-### Free draft lane, second location — Google Colab (verified 2026-08-23)
+### Optional second free lane — Google Colab (verified 2026-08-23, corrected 2026-08-23)
+
+**Colab is optional.** The pipeline runs complete on the local lane alone or the cloud API lane
+alone; `docs/01-architecture.md` states it as an invariant and `.env.example` ships pointing at
+`http://127.0.0.1:8288`. What Colab adds is VRAM headroom for models the 6 GB card cannot host, for
+as long as a session lasts. Notebook and full write-up: `tools/colab/`.
 
 The 6 GB card is the binding constraint, not the GPU generation. A Colab **T4 gives ~15 GB of the
-same Turing architecture**, which changes _which models exist_ rather than how fast they run.
-Notebook and full write-up: `tools/colab/`.
+same Turing architecture**, which changes _which models exist_ rather than how fast they run. A
+paid plan can also allocate **L4** and **A100**, which are different architectures, not just bigger
+ones — see the GPU table below.
 
 **Tier facts.** T4, 16 GB GDDR6 (~15 GB usable), ~12.7 GB system RAM, ephemeral disk. Sessions cap
 at **12 h**, idle timeout commonly ~90 min, weekly GPU hours roughly 15–30. Google **does not
-publish** these limits and states they fluctuate; a GPU is **not guaranteed** at all. Vendor
-figures: T4 = 8.1 FP32 / 65 FP16 TFLOPS, 320 GB/s, 70 W, versus the local Quadro RTX 3000's 5.3
-FP32 TFLOPS and 336 GB/s — **~1.5× the arithmetic, slightly less bandwidth**. Both are compute
-capability **7.5: no bf16, no fp8, on either card.**
+publish** these limits and states they fluctuate; a GPU is **not guaranteed** on _any_ tier — paid
+plans buy premium GPUs "subject to availability". Vendor figures: T4 = 8.1 FP32 / 65 FP16 TFLOPS,
+320 GB/s, 70 W, versus the local Quadro RTX 3000's 5.3 FP32 TFLOPS and 336 GB/s — **~1.5× the
+arithmetic, slightly less bandwidth**. Both are compute capability **7.5: no bf16, no fp8, on
+either card.** L4 = 30.3 FP32 TFLOPS, 121 FP16/BF16 tensor TFLOPS dense, 24 GB, 300 GB/s.
+A100 = 19.5 FP32, 312 FP16/BF16 tensor TFLOPS dense, 40 GB.
 
-**ToS position — this is against the rules on the free tier.** Colab's FAQ lists, as disallowed
-_from free-tier runtimes without a positive compute balance_: **"bypassing the notebook UI to
-interact primarily via a web UI"** and _"remote control such as SSH shells, remote desktops"_.
-Driving ComfyUI's API over a tunnel is exactly that — the same clause Google used in 2023 to block
-`stable-diffusion-webui` on free Colab (ComfyUI issue #1460 recorded the same outcome), and which
-Colab's product lead said explicitly did **not** apply to paid users. Two clauses bind **all**
-runtimes including paid: _"web service offerings not related to interactive compute"_ and
-_"connecting to remote proxies"_ — so this is a session-scoped scratch lane, never always-on
-infrastructure. **Recommendation: Colab Pro / pay-as-you-go** (a positive compute balance lifts the
-free-tier-only list, and L4/A100 additionally give bf16 + fp8), or **Kaggle** (free, 30 GPU-h/week,
-T4×2, no equivalent web-UI clause), or a rented GPU. Do not run it on a free account.
+> **⚠️ CORRECTION to the previous finding.** An earlier revision of this section said flatly:
+> _"ToS position — this is against the rules on the free tier … Do not run it on a free account."_
+> The first half was right and the framing was wrong: it presented a **free-tier-only** prohibition
+> as the headline position, and the surrounding docs read as though the whole lane were
+> off-limits. **The project owner has Colab Pro**, which puts this squarely in the permitted
+> column. The tier table below is the corrected position; nothing about the underlying quotations
+> changed, only which list they were read off.
+
+**ToS position, by tier.** Colab's FAQ keeps **two** lists of disallowed activities.
+
+| runtime                                                | ComfyUI over a tunnel | the wording that decides it                                                                                                                                                                           |
+| ------------------------------------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **free tier**, no positive compute balance             | ❌ disallowed         | List two applies to _"managed Colab runtimes running free of charge, without a positive Colab compute unit balance"_ and includes **"bypassing the notebook UI to interact primarily via a web UI"**. |
+| **Colab Pro / Pro+ / pay-as-you-go**, positive balance | ✅ **allowed**        | Same FAQ, closing that list: _"You can remove these types of restrictions by purchasing one of our paid plans and maintaining a positive compute unit balance."_                                      |
+| **all tiers**                                          | ⚠️ bounded            | List one binds everyone: _"web service offerings not related to interactive compute"_, _"connecting to remote proxies"_. Session-scoped scratch lane, **never always-on infrastructure.**             |
+
+The 2023 `stable-diffusion-webui` block (ComfyUI issue #1460) was the same scoping: Colab's product
+lead described a free-tier resource measure that explicitly did **not** apply to paid users.
+Corroboration from a second direction — in June 2026 Google shipped an **official Colab CLI** whose
+commands include `colab ssh` and `colab console`, while the FAQ still lists _"remote control such as
+SSH shells"_ on the free-tier-only list. Both are current, and they are only consistent under the
+tier reading. **If you have no compute balance:** Kaggle (free, 30 GPU-h/week, T4×2, no equivalent
+web-UI clause), a rented GPU, or stay local.
+
+**Automation.** "Colab" is **two different products**, and only the Google Cloud one has a public
+API. Four paths, one shipped:
+
+| path                                       | scriptable                                                       | billing                           | shipped?                          |
+| ------------------------------------------ | ---------------------------------------------------------------- | --------------------------------- | --------------------------------- |
+| **Consumer Colab, notebook + cloudflared** | no — manual, 8 cells in a browser                                | Colab compute units               | ✅ **this is what we ship**       |
+| **Consumer Colab, official `colab` CLI**   | yes, but **Linux/macOS only**; no public API, internal endpoints | same compute units                | ❌ evaluated, not adopted         |
+| **Colab Enterprise, `gcloud colab`**       | **yes** — GA CLI + documented Google Cloud API                   | **GCP, per runtime** (VM + GPU h) | ❌ wrong product for a scratchpad |
+| **Local ComfyUI**                          | yes                                                              | free                              | ✅ shipped, **and the default**   |
+
+- **`gcloud colab` is real but drives a different product.** GA, four command groups —
+  `runtimes`, `runtime-templates`, `executions`, `schedules` — over a documented Google Cloud API.
+  Hardware lives in the template (`--machine-type` default `e2-standard-4`, `--accelerator-type` ∈
+  `NVIDIA_TESLA_T4 | NVIDIA_TESLA_V100 | NVIDIA_L4 | NVIDIA_TESLA_A100 | NVIDIA_A100_80GB`,
+  `--idle-shutdown-timeout` default `3h`). It makes _provisioning_ scriptable but not _ingress_ —
+  you still need a way to reach ComfyUI's HTTP API — and it bills per runtime on GCP.
+- **Consumer Colab gained an official CLI on 2026-06-05** — `google-colab-cli`
+  (`colab new --gpu L4`, `colab exec`, `colab ssh --proxy-mode`, `colab stop`). This **contradicts
+  the assumption that consumer Colab has no CLI**. It is Linux/macOS-only (the dev machine is
+  Windows) and drives undocumented `colab.research.google.com/tun/m/*` endpoints, so it is not a
+  contract to build on — but `colab ssh -L` would remove the public tunnel entirely and is the
+  first thing to evaluate if this lane ever stops being a scratchpad.
 
 **Tunnelling: cloudflared quick tunnel.** No account, HTTPS, supports the WebSockets ComfyUI's
 `/ws` channel needs. `localtunnel` needs no account but interposes an IP-entry interstitial that a
@@ -190,28 +233,54 @@ machine client cannot pass; `ngrok` needs a signup and injects a browser warning
 Cloudflare documents quick tunnels as testing-only, capped at 200 concurrent requests.
 
 **ComfyUI has no authentication**, so the tunnel points at a **token-gated reverse proxy**, never at
-ComfyUI. Contract for the adapter: `COMFYUI_HOST` = the tunnel origin, `Authorization: Bearer
+ComfyUI. **This is independent of tier** — paying Google does not make a public URL private.
+Contract for the adapter: `COMFYUI_HOST` = the tunnel origin, `Authorization: Bearer
 $COMFYUI_AUTH_TOKEN` on every request, `RV_COMFYUI_REMOTE=true`. The gate was built and
 **verified against live ComfyUI 0.33.0 — 18 assertions**, including a full `POST /prompt` →
 `/history` → `/view` PNG round trip and a byte-identical 1.6 MB `/object_info`.
 
 **Model-set recommendation.**
 
-- **SDXL + LCM-LoRA-SDXL (7.3 GB) as the default.** It needs **no new workflow files** — the
-  existing SD 1.5 graphs have no version-specific node input, so only `{{checkpoint}}`,
-  `{{lora}}` and the resolution change.
-- **FLUX.1-schnell as GGUF Q4_K_S (10.8 GB) as the experiment**, _not_ fp8: **fp8 needs compute
-  capability 8.9** and a T4 is 7.5. GGUF dequantises to fp16, which Turing does natively.
+- **SDXL + LCM-LoRA-SDXL (7.3 GB) as the default, on every GPU.** It needs **no new workflow
+  files** — the existing SD 1.5 graphs have no version-specific node input, so only
+  `{{checkpoint}}`, `{{lora}}` and the resolution change.
+- **FLUX.1-schnell is now GPU-dependent.** The previous finding — _"as GGUF Q4_K_S, not fp8: fp8
+  needs compute capability 8.9 and a T4 is 7.5"_ — is **still exactly right for a T4**, and is
+  **no longer the whole answer**, because Pro can hand you a card that is not a T4. Compute
+  capabilities, from NVIDIA's table: T4 **7.5**, A100 **8.0**, L4 **8.9**, H100 **9.0**.
+
+| GPU      | cc      | fp8?   | file the notebook pulls                         | download | workflow                          |
+| -------- | ------- | ------ | ----------------------------------------------- | -------- | --------------------------------- |
+| **T4**   | 7.5     | ❌     | `flux1-schnell-Q4_K_S.gguf` + T5-XXL Q5_K_M     | 10.8 GB  | `txt2img-flux-schnell-*.json`     |
+| **A100** | **8.0** | **❌** | `flux1-schnell-Q8_0.gguf` + T5-XXL Q8_0         | 18.3 GB  | `txt2img-flux-schnell-*.json`     |
+| **L4**   | **8.9** | ✅     | `flux1-schnell-fp8-e4m3fn.safetensors` + T5 fp8 | 17.4 GB  | `txt2img-flux-schnell-fp8-*.json` |
+| **H100** | 9.0     | ✅     | as L4                                           | 17.4 GB  | `txt2img-flux-schnell-fp8-*.json` |
+
+**The A100 is the trap:** it is the biggest card Colab allocates and it still cannot load an fp8
+checkpoint — Ampere is 8.0, fp8 needs 8.9. ComfyUI's own GPU guide agrees: _"30 series (ampere):
+fp16, bf16"_ versus _"40 series (ada): fp16, bf16, fp8"_. On an A100, GGUF **Q8_0** is the right
+answer, not a fallback: it dequantises to bf16, which the A100 runs at full tensor-core rate.
+The notebook's `FLUX_VARIANT='auto'` reads `nvidia-smi`'s compute capability and picks accordingly;
+`fp8` on a card below 8.9 is **refused**, not silently downgraded. A side benefit of the fp8 path:
+core `UNETLoader`/`DualCLIPLoader` replace the GGUF loaders, so it does not need the `ComfyUI-GGUF`
+custom node — the notebook's most fragile pin.
+
 - **On §3's finding that SD 1.5 cannot decompose characters into parts:** that is a
   prompt-adherence failure, so the fix — if there is one — is a better _text encoder_, not a bigger
   UNet. SD 1.5 has CLIP-L (77 tokens, bag-of-words); **SDXL adds OpenCLIP-bigG but is still CLIP at
   77 tokens, so SDXL is not expected to fix it**; FLUX conditions on **T5-XXL at 512 tokens**, which
   can carry multi-clause layout instructions. Against it: the "reference sheet = turnaround" prior
   is universal, and a 4-step distilled model resists argument. `txt2img-flux-schnell-parts-sheet.json`
-  exists to settle it. **Unrun — no result yet.**
+  and its fp8 twin exist to settle it. **Unrun — no result yet.**
 
-Everything above is verified. **Nothing has been executed on Colab**: no notebook cell, no T4
-timing, no FLUX output. All T4 s/image figures in `tools/colab/README.md` are labelled estimates.
+Everything above is verified against live sources or live local ComfyUI 0.33.0. **Nothing has been
+executed on Colab**: no notebook cell, no T4/L4/A100 timing, no FLUX output, and **no fp8 has ever
+run on hardware available to this project** (the local card is cc 7.5). All Colab s/image figures in
+`tools/colab/README.md` are labelled estimates, and the L4/A100 ones are estimates derived from
+estimates. What _was_ executed locally: all four FLUX workflows validate against ComfyUI 0.33.0
+(`node_errors: {}` with the loaders stubbed), all twelve model URLs return the recorded byte size
+and SHA-256 anonymously, and the notebook's GPU-detection cell was run against synthetic
+`nvidia-smi` output for T4/L4/A100/H100 to confirm each resolves to the file above.
 
 ### Editing
 
@@ -347,15 +416,25 @@ re-layout) — instead of maintaining three parallel projects.
 
 Colab lane (§2, verified 2026-08-23):
 
-- https://research.google.com/colaboratory/faq.html (prohibited activities; free-tier-only list)
+- https://research.google.com/colaboratory/faq.html (two lists; the free-tier-only list and the sentence that lifts it)
 - https://github.com/comfyanonymous/ComfyUI/issues/1460 ("No more free Colab for ComfyUI", 2023-09)
 - https://news.ycombinator.com/item?id=35653698 (Colab blocking stable-diffusion-webui)
 - https://decrypt.co/197428/google-colab-stable-diffusion-web-ui-ban (Colab lead: free tier only)
+- https://developers.googleblog.com/introducing-the-google-colab-cli/ (official consumer Colab CLI, 2026-06-05)
+- https://github.com/googlecolab/google-colab-cli (command index; Linux/macOS only; T4/L4/A100/H100)
+- https://cloud.google.com/sdk/gcloud/reference/colab (GA; runtimes / runtime-templates / executions / schedules — Colab **Enterprise**)
+- https://cloud.google.com/sdk/gcloud/reference/colab/runtime-templates/create (flags, defaults, accelerator enum)
+- https://cloud.google.com/colab/docs/create-runtime · https://cloud.google.com/colab/pricing
+- https://developer.nvidia.com/cuda-gpus (compute capability: T4 7.5, A100 8.0, L4 8.9, H100 9.0, Quadro RTX 3000 7.5)
 - https://www.nvidia.com/en-us/data-center/tesla-t4/ (8.1 FP32 / 65 FP16 TFLOPS, 16 GB, 320+ GB/s, 70 W)
+- https://www.nvidia.com/en-us/data-center/l4/ (30.3 FP32; 242 FP16/BF16 and 485 FP8 TFLOPS _with sparsity_; 24 GB, 300 GB/s, 72 W)
+- https://www.nvidia.com/en-us/data-center/a100/ (19.5 FP32; 312 FP16/BF16 tensor TFLOPS dense; **no FP8 row**)
 - https://videocardz.net/nvidia-quadro-rtx-3000-mobile (5.3 FP32 TFLOPS, 336 GB/s, 240 tensor cores)
-- https://github.com/Comfy-Org/ComfyUI/wiki/Which-GPU-should-I-buy-for-ComfyUI (fp8 needs cc 8.9)
+- https://github.com/Comfy-Org/ComfyUI/wiki/Which-GPU-should-I-buy-for-ComfyUI ("30 series (ampere): fp16, bf16" vs "40 series (ada): fp16, bf16, fp8")
 - https://github.com/city96/ComfyUI-GGUF (pinned 6ea2651e, last commit 2026-01-12)
-- https://huggingface.co/city96/FLUX.1-schnell-gguf
-- https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf
+- https://huggingface.co/city96/FLUX.1-schnell-gguf (Q4_K_S 6,783,943,712 B; Q8_0 12,687,821,728 B)
+- https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf (Q5_K_M 3,386,856,640 B; Q8_0 5,061,584,064 B)
+- https://huggingface.co/Kijai/flux-fp8 (flux1-schnell-fp8-e4m3fn 11,891,329,784 B)
+- https://huggingface.co/comfyanonymous/flux_text_encoders (t5xxl_fp8_e4m3fn 4,893,934,904 B; clip_l 246,144,152 B)
 - https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/
 - https://www.kaggle.com/general/108481 (Kaggle 30 GPU-h/week, T4x2 / P100)
