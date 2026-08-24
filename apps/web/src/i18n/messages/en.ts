@@ -9,6 +9,13 @@ import type { MessageSchema } from './fa';
  * that too. The runtime key-set test in `i18n.spec.ts` is the second net, for the case
  * where a catalogue is assembled dynamically.
  */
+import assets from './en/assets';
+import characters from './en/characters';
+import render from './en/render';
+import story from './en/story';
+import styleLab from './en/style-lab';
+import timeline from './en/timeline';
+
 const en: MessageSchema = {
   app: {
     name: 'Rivayat',
@@ -91,6 +98,7 @@ const en: MessageSchema = {
       cancelled: 'The operation was cancelled.',
       internal: 'Internal server error.',
     },
+    serverDetail: 'Server report',
     code: 'Error code: {code}',
     retryable: 'Trying again may work.',
   },
@@ -105,7 +113,6 @@ const en: MessageSchema = {
   projects: {
     title: 'Projects',
     subtitle: 'Each project owns a series, a style bible and an asset library.',
-    empty: 'No projects yet.',
     emptyHint: 'Start the first one from a one-line idea.',
     columns: {
       name: 'Name',
@@ -120,6 +127,32 @@ const en: MessageSchema = {
     styleAbsent: 'Not chosen',
     episodeCount: 'No episodes | One episode | {count} episodes',
     openProject: 'Open project {name}',
+    noLogline: 'No idea written down yet',
+    emptyTitle: 'This is where an idea becomes a series.',
+    startAnother: 'Start the next idea here too.',
+    totals: {
+      label: 'Total',
+      projects: 'One project | {count} projects',
+      spend: 'Studio spend to date',
+    },
+    new: {
+      action: 'New project',
+      title: 'New project',
+      intro: 'A name and a one-line idea is enough. Everything else starts from those two.',
+      nameLabel: 'Project name',
+      nameHint: 'Up to 120 characters.',
+      ideaLabel: 'The idea',
+      ideaHint: 'A sentence or two about what it is. You can expand it later.',
+      ideaPlaceholder:
+        'For instance: a mountain postman, one winter, a secret that must reach nobody.',
+      submit: 'Create project',
+      submitting: 'Creating…',
+      created: 'Project “{name}” created.',
+      nameRequired: 'Give it a name.',
+      ideaRequired: 'Write a short sentence about the idea.',
+      tooLong: 'That is longer than the field allows.',
+      failed: 'The project could not be created.',
+    },
   },
 
   settings: {
@@ -253,6 +286,16 @@ const en: MessageSchema = {
     body: 'That address does not lead to any screen.',
     backToProjects: 'Back to projects',
   },
+
+  // One namespace per screen, each in its own file under `en/`. Screens are built by
+  // different people at different times; a single catalogue is the file they all have to
+  // edit at once, and the merge that follows loses somebody's keys.
+  styleLab,
+  story,
+  characters,
+  assets,
+  timeline,
+  render,
 };
 
 export default en;

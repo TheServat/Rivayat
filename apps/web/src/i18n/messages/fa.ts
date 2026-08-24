@@ -14,6 +14,13 @@
  * Two characters are reserved by the vue-i18n message compiler and must not appear as
  * literal text: `|` separates plural forms and `@` starts a linked message.
  */
+import assets from './fa/assets';
+import characters from './fa/characters';
+import render from './fa/render';
+import story from './fa/story';
+import styleLab from './fa/style-lab';
+import timeline from './fa/timeline';
+
 const fa = {
   app: {
     name: 'روایت',
@@ -98,6 +105,7 @@ const fa = {
       cancelled: 'عملیات لغو شد.',
       internal: 'خطای داخلی سرور.',
     },
+    serverDetail: 'گزارش سرور',
     code: 'کد خطا: {code}',
     retryable: 'تلاش دوباره ممکن است جواب بدهد.',
   },
@@ -112,7 +120,6 @@ const fa = {
   projects: {
     title: 'پروژه‌ها',
     subtitle: 'هر پروژه یک مجموعه، یک کتاب سبک و یک کتابخانهٔ دارایی دارد.',
-    empty: 'هنوز پروژه‌ای ساخته نشده است.',
     emptyHint: 'اولین پروژه را با یک ایدهٔ کوتاه شروع کنید.',
     columns: {
       name: 'نام',
@@ -127,6 +134,31 @@ const fa = {
     styleAbsent: 'انتخاب‌نشده',
     episodeCount: 'بدون قسمت | یک قسمت | {count} قسمت',
     openProject: 'باز کردن پروژهٔ {name}',
+    noLogline: 'هنوز ایده‌ای نوشته نشده',
+    emptyTitle: 'اینجا جایی است که یک ایده به یک مجموعه تبدیل می‌شود.',
+    startAnother: 'ایدهٔ بعدی را هم همین‌جا شروع کنید.',
+    totals: {
+      label: 'جمع',
+      projects: 'یک پروژه | {count} پروژه',
+      spend: 'هزینهٔ کل استودیو',
+    },
+    new: {
+      action: 'پروژهٔ نو',
+      title: 'پروژهٔ نو',
+      intro: 'یک نام و یک ایدهٔ کوتاه کافی است. بقیهٔ کار از همین دو تا شروع می‌شود.',
+      nameLabel: 'نام پروژه',
+      nameHint: 'حداکثر ۱۲۰ نویسه.',
+      ideaLabel: 'ایده',
+      ideaHint: 'در یکی دو جمله بنویسید دربارهٔ چیست. بعداً می‌توانید بازش کنید.',
+      ideaPlaceholder: 'مثلاً: یک نامه‌رسان کوهستانی، زمستان، رازی که نباید به دست کسی برسد.',
+      submit: 'ساختن پروژه',
+      submitting: 'در حال ساختن…',
+      created: 'پروژهٔ «{name}» ساخته شد.',
+      nameRequired: 'یک نام بنویسید.',
+      ideaRequired: 'یک جملهٔ کوتاه دربارهٔ ایده بنویسید.',
+      tooLong: 'این مقدار از حد مجاز بلندتر است.',
+      failed: 'ساختن پروژه انجام نشد.',
+    },
   },
 
   settings: {
@@ -261,6 +293,16 @@ const fa = {
     body: 'نشانی‌ای که باز کردید به هیچ صفحه‌ای نمی‌رسد.',
     backToProjects: 'بازگشت به پروژه‌ها',
   },
+
+  // One namespace per screen, each in its own file under `fa/`. Screens are built by
+  // different people at different times; a single catalogue is the file they all have to
+  // edit at once, and the merge that follows loses somebody's keys.
+  styleLab,
+  story,
+  characters,
+  assets,
+  timeline,
+  render,
 };
 
 /**

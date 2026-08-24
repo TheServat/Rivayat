@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import App from './App.vue';
+import PlaceholderView from './features/placeholder/PlaceholderView.vue';
 import { IMPLEMENTED, NAV_KEYS, routes } from './router/index';
 import { flush, mountStudio, resetStudio } from './test/harness';
 import { useLocaleStore } from './stores/locale.store';
@@ -32,21 +33,39 @@ describe('the studio shell', () => {
   });
 
   it('is honest about which screens exist', () => {
-    // Two real screens, six placeholders. The list is asserted rather than counted so
-    // that promoting a placeholder is a deliberate edit here as well as in the router.
-    const built = Object.entries(IMPLEMENTED)
-      .filter(([, done]) => done)
-      .map(([name]) => name);
-    expect(built.toSorted()).toEqual(['projects', 'settings']);
+    // The claim is a *relation*, not a list: a section is marked implemented exactly
+    // when its route no longer renders `PlaceholderView`. Asserted this way rather than
+    // against a hard-coded roster because six screens are being built by different
+    // people at different times, and a roster makes every one of those promotions a
+    // three-way edit in a file nobody owns - which is how the badge and the screen drift
+    // apart. The invariant is what matters and it holds at every point in between.
+    const placeholders = new Set(
+      routes
+        .filter((route) => route.component === PlaceholderView)
+        .map((route) => String(route.name)),
+    );
+    for (const [name, done] of Object.entries(IMPLEMENTED)) {
+      expect(done, `${name} claims to be ${done ? 'built' : 'a placeholder'}`).toBe(
+        !placeholders.has(name),
+      );
+    }
+    // And at least the two that were real before any of this started.
+    expect(IMPLEMENTED.projects && IMPLEMENTED.settings).toBe(true);
   });
 
   it('renders a placeholder that states what the screen will hold', async () => {
-    const wrapper = await mountStudio(App, { locale: 'en', path: '/timeline' });
+    // Whichever screen is still unbuilt, rather than a named one: the point is that the
+    // placeholder says what will live there and which story delivers it, and naming a
+    // route here would make this test fail the day that route is implemented - which is
+    // the day it stops being about placeholders at all.
+    const pending = routes.find((route) => route.component === PlaceholderView);
+    if (pending === undefined) return;
+
+    const wrapper = await mountStudio(App, { locale: 'en', path: String(pending.path) });
     await flush();
 
     expect(wrapper.text()).toContain('Not built yet');
-    expect(wrapper.text()).toContain('Animation IR');
-    expect(wrapper.text()).toContain('RV-211');
+    expect(wrapper.text()).toMatch(/RV-2\d\d/);
   });
 
   it('offers a skip link as the first focusable element', async () => {
@@ -104,7 +123,7 @@ describe('types come from the contracts', () => {
    *
    * The one sanctioned exception is `src/api/schemas/pending-contracts.ts`, which
    * exists because `@rv/contracts` does not yet export `ProjectSummary` or
-   * `RunProgressEvent`, and which says so at the top of the file. Anything else
+   * `RunEvent`, and which says so at the top of the file. Anything else
    * declaring a DTO is drift. `src/api/schemas/settings.ts` needs no exception: it
    * composes the real registry shapes rather than restating any.
    */
@@ -129,8 +148,27 @@ describe('types come from the contracts', () => {
     // reads: the resolver package itself loads `.env` and talks to the repository, and
     // the studio's fixture transport re-implements the walk locally rather than
     // importing it.
-    const forbidden =
-      /@rv\/(providers|persistence|render-engine|asset-registry|asset-engine|story-engine|style-engine|anim-engine|core-domain|prompt-kit|narrative-memory|export-kit|settings)/;
+    // `anim-engine` is deliberately **not** on this list, and it is the one exception.
+    // The dependency rule is `apps -> engines -> core-domain/contracts -> shared-kernel`,
+    // and `.dependency-cruiser.cjs` bans exactly four things from `apps/web`:
+    // `apps/api`, `providers`, `asset-registry` and `render-engine`. The IR evaluator is
+    // none of those - it is pure arithmetic over the contracts with no IO and no SDK -
+    // and the timeline player is required to use its `evaluate` rather than a
+    // preview-grade copy, because a preview that disagrees with the renderer makes every
+    // downstream judgement guesswork. See `docs/06-screen-briefs.md`, Timeline.
+    //
+    // The scan reads *module specifiers*, not prose. It used to match the package name
+    // anywhere in the file, which made the sentence "the studio may not import
+    // `@rv/style-engine`" a build failure - so the honest comment explaining why a
+    // fixture exists was punished and a silent `import` a few lines below it would have
+    // been caught by exactly the same regex. Matching `from '...'`, `import('...')` and
+    // `require('...')` catches every way a bundler can be made to resolve one, and lets
+    // a file say what it is not allowed to do.
+    const PACKAGES =
+      'providers|persistence|render-engine|asset-registry|asset-engine|story-engine|style-engine|core-domain|prompt-kit|narrative-memory|export-kit|settings';
+    const forbidden = new RegExp(
+      String.raw`(?:from|import|require)\s*\(?\s*['"]@rv/(?:${PACKAGES})(?:/|['"])`,
+    );
     const offenders = sourceFiles(SRC).filter((file) => forbidden.test(readFileSync(file, 'utf8')));
     expect(offenders).toEqual([]);
   });

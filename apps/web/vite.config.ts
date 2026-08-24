@@ -18,6 +18,12 @@ export default defineConfig({
         find: /^@rv\/shared-kernel$/,
         replacement: here('../../packages/shared-kernel/src/index.ts'),
       },
+      // The IR evaluator. It is an *engine*, and the dependency rule allows
+      // `apps -> engines`: it is pure arithmetic over the contracts, imports no SDK and
+      // touches no IO. The timeline player must use this exact `evaluate` rather than a
+      // preview-grade copy, because one bezier solver shared by the renderer, the sheet
+      // baker and the exporter is the only reason those three agree.
+      { find: /^@rv\/anim-engine$/, replacement: here('../../packages/anim-engine/src/index.ts') },
       // See `src/shims/node-crypto.ts` for why a browser bundle ends up importing this
       // at all.
       { find: /^node:crypto$/, replacement: here('./src/shims/node-crypto.ts') },

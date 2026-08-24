@@ -1,4 +1,7 @@
+import { StyleBible } from '@rv/contracts';
+
 import { ApiError } from '../errors';
+import { NewProjectDraft } from '../schemas/projects';
 import {
   type AnySettingDescriptor,
   SETTINGS_REGISTRY,
@@ -17,6 +20,8 @@ import { parseOrThrow, type StudioTransport, type TransportRequest } from '../tr
 
 import { PROJECT_FIXTURES } from './projects.fixture';
 import { MODEL_CHOICES, SETTING_DESCRIPTORS, SETTING_LAYER_VALUES } from './settings.fixture';
+import { StudioFixtureRoutes, isNotFound } from './studio-routes';
+import { STYLE_PRESET_FIXTURES } from './style.fixture';
 
 /**
  * The backend-free transport.
@@ -45,6 +50,33 @@ import { MODEL_CHOICES, SETTING_DESCRIPTORS, SETTING_LAYER_VALUES } from './sett
 export class FixtureTransport implements StudioTransport {
   readonly kind = 'fixture' as const;
   readonly #layers: Record<SettingScope, Map<string, unknown>>;
+  /**
+   * Projects created during this session.
+   *
+   * Held rather than discarded because "the list is empty, create one, the list has one
+   * row" is the behaviour the projects screen is judged on, and a transport that
+   * accepted the POST and then answered the same two rows would let that break silently.
+   */
+  readonly #created: unknown[] = [];
+  /**
+   * Style bibles materialised from a preset, keyed by id.
+   *
+   * Parsed `StyleBible` values rather than loose objects: the fixture is validated on the
+   * way in as well as on the way out, so a preset that could not become a legal bible
+   * fails here instead of producing a response that happens to satisfy the response
+   * schema. It also means everything downstream reads `bible.visual.palette` rather than
+   * walking `unknown` by hand.
+   */
+  readonly #bibles = new Map<string, StyleBible>();
+  /**
+   * The asset library and the animation index, in a table of their own.
+   *
+   * An instance field rather than a module singleton, for the same reason `#created` is
+   * one: regenerating an asset genuinely appends a version, and a shared store would
+   * leak that append into the next test's version count.
+   */
+  readonly #studio = new StudioFixtureRoutes();
+  #minted = 0;
 
   constructor() {
     this.#layers = {
@@ -67,7 +99,22 @@ export class FixtureTransport implements StudioTransport {
     const [path = '', query = ''] = request.path.split('?');
 
     if (request.method === 'GET' && path === '/projects') {
-      return this.#respond(request, { projects: PROJECT_FIXTURES });
+      return this.#respond(request, { projects: [...PROJECT_FIXTURES, ...this.#created] });
+    }
+    if (request.method === 'POST' && path === '/projects') {
+      return this.#respond(request, this.#createProject(request.body));
+    }
+    if (request.method === 'GET' && path === '/style/presets') {
+      return this.#respond(request, { presets: STYLE_PRESET_FIXTURES });
+    }
+    if (request.method === 'POST' && path === '/style/from-preset') {
+      return this.#respond(request, this.#fromPreset(request.body));
+    }
+    if (request.method === 'POST' && /^\/style\/[^/]+\/probe$/.test(path)) {
+      return this.#respond(request, this.#probe(path.split('/')[2] ?? '', request.body));
+    }
+    if (request.method === 'POST' && /^\/style\/[^/]+\/lock$/.test(path)) {
+      return this.#respond(request, this.#lock(path.split('/')[2] ?? ''));
     }
     if (request.method === 'GET' && path === '/settings') {
       return this.#respond(request, this.#snapshot(scopeRefFrom(query)));
@@ -79,6 +126,27 @@ export class FixtureTransport implements StudioTransport {
       return this.#respond(request, this.#snapshot(patch.scope));
     }
 
+    // The asset library and the animation index, in their own table. Last, so a route
+    // declared above always wins and this can never shadow one.
+    const studio = this.#studio.handle({
+      method: request.method,
+      path,
+      query: new URLSearchParams(query),
+      body: request.body,
+    });
+    if (studio !== undefined) {
+      if (isNotFound(studio.payload)) {
+        throw new ApiError({
+          failure: 'api',
+          code: 'NOT_FOUND',
+          kind: 'not-found',
+          status: 404,
+          message: `nothing is stored at ${path}`,
+        });
+      }
+      return this.#respond(request, studio.payload);
+    }
+
     throw new ApiError({
       failure: 'api',
       code: 'fixture-route-missing',
@@ -86,6 +154,159 @@ export class FixtureTransport implements StudioTransport {
       status: 404,
       message: `the fixture transport has no route for ${request.method} ${path}`,
     });
+  }
+
+  /**
+   * Mints a project the way the API does: validate the body, stamp both clocks, answer
+   * the aggregate.
+   *
+   * The body goes through `NewProjectDraft` - the same schema the form validates with -
+   * so a fixture session refuses exactly what a live one refuses. A transport that
+   * accepted anything would make the form's error path untestable, and the error path
+   * is where a filled form gets lost.
+   */
+  #createProject(body: unknown): unknown {
+    const parsed = NewProjectDraft.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError({
+        failure: 'api',
+        code: 'VALIDATION_FAILED',
+        kind: 'validation',
+        status: 400,
+        message: 'body failed validation',
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+          code: issue.code,
+        })),
+      });
+    }
+    this.#minted += 1;
+    const now = FIXTURE_INSTANT;
+    const created = {
+      id: `prj_01JQZM5P9R7S2T4V6W8X0YB${String(this.#minted).padStart(2, '0')}Z`,
+      name: parsed.data.name,
+      description: parsed.data.description,
+      locale: 'fa',
+      styleBibleId: null,
+      budgetNanoUsd: parsed.data.budgetNanoUsd,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#created.push({
+      id: created.id,
+      name: created.name,
+      logline: created.description.slice(0, 400),
+      locale: 'fa',
+      styleBibleId: null,
+      styleLocked: false,
+      episodeCount: 0,
+      spentNanoUsd: 0,
+      updatedAt: now,
+    });
+    return created;
+  }
+
+  /**
+   * A preset becomes a bible: the draft, plus the three things only the server can mint.
+   *
+   * The checksum is a fixed, obviously-synthetic hex rather than a computed one. The
+   * studio cannot hash - `src/shims/node-crypto.ts` makes `createHash` throw on purpose,
+   * because a plausible-but-wrong dedup key is the one failure non-negotiable #2 cannot
+   * tolerate - so a fixture that produced a *convincing* checksum would be modelling the
+   * exact mistake that shim exists to prevent.
+   */
+  #fromPreset(body: unknown): unknown {
+    const preset = STYLE_PRESET_FIXTURES.find(
+      (candidate) => candidate.id === (body as { preset?: unknown }).preset,
+    );
+    if (preset === undefined) {
+      throw new ApiError({
+        failure: 'api',
+        code: 'NOT_FOUND',
+        kind: 'not-found',
+        status: 404,
+        message: 'no such style preset',
+      });
+    }
+    const id = `sty_01JQZK4A1B2C3D4E5F6G7H8J${String(this.#bibles.size + 1).padStart(2, '0')}`;
+    const bible = StyleBible.parse({
+      ...preset.draft,
+      id,
+      version: 1,
+      checksum: FIXTURE_CHECKSUM,
+      lockedAt: null,
+      createdAt: FIXTURE_INSTANT,
+    });
+    this.#bibles.set(id, bible);
+    return bible;
+  }
+
+  /**
+   * Four tiles, drawn rather than generated.
+   *
+   * Each tile is an inline SVG in the style's own palette - unmistakably a placeholder,
+   * and deliberately so. The purpose of a fixture probe is to exercise the parts of the
+   * screen that are hard to get right (the 2x2 skeleton, the per-tile cost, the "priced"
+   * distinction, the lane the sheet was run on), not to pretend an image model ran.
+   *
+   * The paid lane charges the catalogue's cheapest credible image price from research 2
+   * - $0.0336 a tile on `google/gemini-3.1-flash-lite-image` - so the difference between
+   * the two lanes on screen is the difference a real run would show.
+   */
+  #probe(id: string, body: unknown): unknown {
+    const bible = this.#bibles.get(id);
+    if (bible === undefined) {
+      throw new ApiError({
+        failure: 'api',
+        code: 'NOT_FOUND',
+        kind: 'not-found',
+        status: 404,
+        message: 'no such style bible',
+      });
+    }
+    const lane = (body as { lane?: unknown }).lane === 'paid' ? 'paid' : 'free';
+    const perTile = lane === 'paid' ? 33_600_000 : 0;
+    const swatches = bible.visual.palette.colors.map((colour) => colour.hex);
+
+    const tiles = PROBE_FIXTURE_SUBJECTS.map((subject, index) => ({
+      subject: subject.key,
+      label: subject.label,
+      imageUrl: probeTileSvg(swatches, index),
+      provider: lane === 'paid' ? 'openrouter' : 'comfyui',
+      model: lane === 'paid' ? 'google/gemini-3.1-flash-lite-image' : 'sdxl-turbo',
+      seed: bible.seed + index,
+      costNanoUsd: perTile,
+      priced: true,
+    }));
+
+    return {
+      styleBibleId: id,
+      styleChecksum: bible.checksum,
+      lane,
+      width: 512,
+      height: 512,
+      tiles,
+      totalCostNanoUsd: perTile * tiles.length,
+      costIsComplete: true,
+      generatedAt: FIXTURE_INSTANT,
+    };
+  }
+
+  #lock(id: string): unknown {
+    const bible = this.#bibles.get(id);
+    if (bible === undefined) {
+      throw new ApiError({
+        failure: 'api',
+        code: 'NOT_FOUND',
+        kind: 'not-found',
+        status: 404,
+        message: 'no such style bible',
+      });
+    }
+    const locked = { ...bible, lockedAt: FIXTURE_INSTANT };
+    this.#bibles.set(id, locked);
+    return locked;
   }
 
   #respond<T>(request: TransportRequest<T>, payload: unknown): T {
@@ -301,3 +522,47 @@ const ENV_WARNINGS = [
     message: 'No setting reads this variable. Did you mean RV_BUDGET_USD_PER_DAY?',
   },
 ];
+
+/**
+ * The fixture's clock reading and its stand-in checksum.
+ *
+ * Constants rather than `Date.now()` and a hash: a transport whose answers change with
+ * the wall clock produces a visual-regression diff on every run, and non-negotiable #1
+ * bans the read outright. Sixty-four zeroes is a valid `Sha256Hex` and an impossible
+ * one, which is the right property for a value nobody should mistake for real.
+ */
+const FIXTURE_INSTANT = '2026-08-22T09:05:00Z';
+const FIXTURE_FALLBACK_HEX = '#888888';
+const FIXTURE_CHECKSUM = '0'.repeat(64);
+
+/**
+ * The four subjects every candidate style is tested on.
+ *
+ * Fixed forever, and mirrored from `@rv/style-engine`'s `PROBE_SUBJECTS` for the same
+ * reason the presets are: the studio may not import the engine. A character is the only
+ * subject with an identity to keep, a tree is the test of whether the style splits into
+ * riggable parts, a prop has to survive at thumbnail size, and a sky is the one subject
+ * with no line work, so the palette has nothing to hide behind.
+ */
+const PROBE_FIXTURE_SUBJECTS = [
+  { key: 'character', label: { fa: 'شخصیت ایستاده', en: 'Standing figure' } },
+  { key: 'tree', label: { fa: 'درخت پهن‌برگ', en: 'Broadleaf tree' } },
+  { key: 'prop', label: { fa: 'کوزهٔ آب', en: 'Water jug' } },
+  { key: 'sky', label: { fa: 'آسمان روز', en: 'Daytime sky' } },
+] as const;
+
+/** A flat composition in the style's palette, as a data URL. Obviously not a render. */
+function probeTileSvg(swatches: readonly string[], index: number): string {
+  // `Palette` guarantees at least three colours, so the fallback is unreachable for a
+  // parsed bible and present because `noUncheckedIndexedAccess` is on.
+  const at = (offset: number): string =>
+    swatches[(index + offset) % swatches.length] ?? FIXTURE_FALLBACK_HEX;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+    `<rect width="64" height="64" fill="${at(4)}"/>` +
+    `<circle cx="${22 + index * 6}" cy="26" r="${11 + (index % 3) * 3}" fill="${at(0)}"/>` +
+    `<rect x="${14 + index * 4}" y="34" width="${20 + (index % 2) * 10}" height="22" fill="${at(1)}"/>` +
+    `<rect x="0" y="${52 + (index % 3)}" width="64" height="12" fill="${at(3)}"/>` +
+    `</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}

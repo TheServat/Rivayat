@@ -1,15 +1,18 @@
-import type { RunId } from '@rv/contracts';
+import type { PipelineStageKey, RunId } from '@rv/contracts';
 import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue';
 import type { ComputedRef, MaybeRefOrGetter, Ref } from 'vue';
 
 import { useStudioApi } from '../api/client';
 import { ApiError } from '../api/errors';
-import { RunProgressEvent } from '../api/schemas/pending-contracts';
+import {
+  openRunStream,
+  type EventSourceFactory,
+  type RunStream,
+  type RunStreamState,
+} from '../api/run-stream';
+import type { RunEvent } from '../api/schemas/pending-contracts';
 
-export type SseConnectionState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'failed';
-
-/** Constructs the stream. Injectable so a test drives it without a network. */
-export type EventSourceFactory = (url: string) => EventSource;
+export type SseConnectionState = RunStreamState;
 
 export interface UseRunProgressOptions {
   /** Backoff before attempt `n`, in milliseconds. Attempt 1 is the first *re*connect. */
@@ -20,96 +23,159 @@ export interface UseRunProgressOptions {
   readonly cancelSchedule?: (handle: number) => void;
 }
 
+export interface RunIssue {
+  readonly seq: number;
+  readonly severity: 'info' | 'warning' | 'error';
+  readonly code: string;
+  readonly message: string;
+  readonly stage: PipelineStageKey | null;
+}
+
+/** The state a run's events fold into. Every screen watching a run wants this shape. */
+export interface RunProgressState {
+  /** Per stage, 0..1. A finished stage is 1 whatever its last progress frame said. */
+  readonly progress: ReadonlyMap<PipelineStageKey, number>;
+  /** Total spend the server has reported. `null` until it reports one. */
+  readonly costNanoUsd: number | null;
+  /** Headroom at the tightest ceiling, or `null` when the run is uncapped. */
+  readonly remainingNanoUsd: number | null;
+  readonly issues: readonly RunIssue[];
+  /** Set by the terminal frame, which is also the last one on the stream. */
+  readonly finishedStatus: 'succeeded' | 'failed' | 'cancelled' | null;
+}
+
 export interface RunProgressHandle {
-  readonly events: Ref<readonly RunProgressEvent[]>;
-  readonly latest: ComputedRef<RunProgressEvent | null>;
+  readonly events: Ref<readonly RunEvent[]>;
+  readonly latest: ComputedRef<RunEvent | null>;
+  readonly state: Ref<RunProgressState>;
   readonly connection: Ref<SseConnectionState>;
-  readonly attempt: Ref<number>;
   readonly error: Ref<ApiError | null>;
   open: () => void;
   close: () => void;
 }
 
-/**
- * Exponential backoff, capped.
- *
- * No jitter, and no `Math.random()`: the studio is one client, so there is no
- * thundering herd to spread out, and non-negotiable #1 rules out unseeded randomness
- * as a matter of habit rather than only where it changes a render.
- */
-function defaultBackoff(attempt: number): number {
-  return Math.min(500 * 2 ** (attempt - 1), 30_000);
-}
+const EMPTY: RunProgressState = {
+  progress: new Map(),
+  costNanoUsd: null,
+  remainingNanoUsd: null,
+  issues: [],
+  finishedStatus: null,
+};
 
 /**
- * A run's progress stream, with reconnection.
+ * A run's progress, as a component sees it.
  *
- * Three behaviours make this worth a composable rather than an inline `EventSource`:
+ * A thin wrapper over `openRunStream` in `src/api/`: that module owns the socket, the
+ * reconnection and the validation, and this one owns the refs, the fold and the Vue
+ * lifetime. The split is deliberate - a transport that needs a component scope to be
+ * testable is a transport nobody tests properly.
  *
- *  - **Every message is validated.** A tick that fails `RunProgressEvent` is recorded
- *    as a schema error and dropped. A malformed progress event that reaches the UI
- *    renders a run as finished, or as costing nothing, and either is worse than a gap.
- *  - **Reconnection is bounded and observable.** The browser's own `EventSource`
- *    reconnects silently and forever; a UI needs to say "disconnected, retrying" and
- *    eventually "gave up", so the automatic behaviour is replaced with an explicit one.
- *  - **It closes itself.** `onScopeDispose` guarantees the socket dies with the
- *    component, which a hand-rolled `onUnmounted` in three screens will not.
+ * ## What was wrong here before, and why nothing caught it
+ *
+ * This composable read `stream.onmessage` and validated against a flat
+ * `{stage, status, fraction}` schema. Both were wrong, and both failed silently:
+ *
+ *  - `EventSource` delivers a frame carrying an `event:` line to
+ *    `addEventListener(name, ...)` and **never** to `onmessage`. Every frame the API
+ *    sends is named, so this connected, held the socket open, and received nothing -
+ *    for ever, while reporting `open`.
+ *  - the schema was invented from the architecture document rather than captured from
+ *    the server, so even a frame that had arrived would have been rejected.
+ *
+ * The old unit test drove `onmessage` directly with payloads in the invented shape, so
+ * the suite was green on both counts. The lesson is the one this repository keeps
+ * relearning: a test that feeds a component its own assumptions measures the
+ * assumptions. `run-stream.spec.ts` now asserts the opposite direction - an *unnamed*
+ * frame must be ignored - so re-introducing `onmessage` fails rather than passes.
+ *
+ * ## Reconnection
+ *
+ * Owned by the browser while it is willing to retry, because only its own internal
+ * retry sends `Last-Event-ID`, and only that header makes the server resume rather
+ * than replay from the first event. See `src/api/run-stream.ts`; the sequence guard
+ * there absorbs a replay rather than double-counting it, which is what stops an issue
+ * list doubling every time a laptop lid closes.
  */
 export function useRunProgress(
   runId: MaybeRefOrGetter<RunId | null>,
   options: UseRunProgressOptions = {},
 ): RunProgressHandle {
-  const backoffMs = options.backoffMs ?? defaultBackoff;
-  const maxAttempts = options.maxAttempts ?? 6;
-  const createEventSource =
-    options.createEventSource ?? ((url: string): EventSource => new EventSource(url));
-  const schedule =
-    options.schedule ??
-    ((callback: () => void, delayMs: number): number =>
-      globalThis.setTimeout(callback, delayMs) as unknown as number);
-  const cancelSchedule =
-    options.cancelSchedule ?? ((handle: number) => globalThis.clearTimeout(handle));
-
-  const events = ref<readonly RunProgressEvent[]>([]);
+  const events = ref<readonly RunEvent[]>([]);
+  const state = ref<RunProgressState>(EMPTY);
   const connection = ref<SseConnectionState>('idle');
-  const attempt = ref(0);
   const error = ref<ApiError | null>(null);
-  const source = shallowRef<EventSource | null>(null);
-  let retryHandle: number | null = null;
+  const stream = shallowRef<RunStream | null>(null);
 
-  const latest = computed<RunProgressEvent | null>(() => events.value.at(-1) ?? null);
+  const latest = computed<RunEvent | null>(() => events.value.at(-1) ?? null);
 
-  function teardown(): void {
-    if (retryHandle !== null) {
-      cancelSchedule(retryHandle);
-      retryHandle = null;
+  function fold(event: RunEvent): void {
+    events.value = [...events.value, event];
+    const current = state.value;
+
+    switch (event.type) {
+      case 'stage-started': {
+        const progress = new Map(current.progress);
+        progress.set(event.stage, 0);
+        state.value = { ...current, progress };
+        return;
+      }
+      case 'stage-progress': {
+        const progress = new Map(current.progress);
+        progress.set(event.stage, event.progress);
+        state.value = { ...current, progress };
+        return;
+      }
+      case 'stage-completed': {
+        const progress = new Map(current.progress);
+        progress.set(event.stage, 1);
+        state.value = { ...current, progress };
+        return;
+      }
+      case 'cost-updated': {
+        state.value = {
+          ...current,
+          costNanoUsd: event.totalNanoUsd,
+          remainingNanoUsd: event.remainingNanoUsd,
+        };
+        return;
+      }
+      case 'issue-raised': {
+        state.value = {
+          ...current,
+          issues: [
+            ...current.issues,
+            {
+              seq: event.seq,
+              severity: event.severity,
+              code: event.code,
+              message: event.message,
+              stage: event.stage,
+            },
+          ],
+        };
+        return;
+      }
+      case 'run-completed': {
+        state.value = {
+          ...current,
+          costNanoUsd: event.totalNanoUsd,
+          finishedStatus: event.status,
+        };
+        return;
+      }
     }
-    source.value?.close();
-    source.value = null;
   }
 
-  function handleMessage(payload: string): void {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload) as unknown;
-    } catch (cause) {
-      error.value = new ApiError({
-        failure: 'schema',
-        code: 'sse-payload-not-json',
-        message: 'a progress event was not JSON',
-        cause,
-      });
-      return;
-    }
-    const result = RunProgressEvent.safeParse(parsed);
-    if (!result.success) {
-      error.value = ApiError.schema('run progress event', result.error);
-      return;
-    }
-    events.value = [...events.value, result.data];
+  function close(): void {
+    stream.value?.close();
+    stream.value = null;
+    connection.value = 'idle';
   }
 
-  function connect(): void {
+  function open(): void {
+    close();
+    error.value = null;
+
     const id = toValue(runId);
     if (id === null) return;
 
@@ -124,52 +190,23 @@ export function useRunProgress(
       return;
     }
 
-    connection.value = attempt.value === 0 ? 'connecting' : 'reconnecting';
-    const stream = createEventSource(url);
-    source.value = stream;
-
-    stream.onopen = (): void => {
-      connection.value = 'open';
-      attempt.value = 0;
-      error.value = null;
-    };
-    stream.onmessage = (event: MessageEvent<string>): void => {
-      handleMessage(event.data);
-    };
-    stream.onerror = (): void => {
-      // `EventSource` gives no detail on error, so the state - not the event - is what
-      // tells us whether this is worth retrying.
-      stream.close();
-      source.value = null;
-      if (attempt.value >= maxAttempts) {
-        connection.value = 'failed';
-        error.value = new ApiError({
-          failure: 'network',
-          code: 'sse-reconnect-exhausted',
-          message: `gave up after ${String(maxAttempts)} reconnection attempts`,
-          context: { attempts: maxAttempts },
-        });
-        return;
-      }
-      attempt.value += 1;
-      connection.value = 'reconnecting';
-      retryHandle = schedule(() => {
-        retryHandle = null;
-        connect();
-      }, backoffMs(attempt.value));
-    };
-  }
-
-  function open(): void {
-    teardown();
-    attempt.value = 0;
-    error.value = null;
-    connect();
-  }
-
-  function close(): void {
-    teardown();
-    connection.value = 'idle';
+    stream.value = openRunStream({
+      url,
+      onEvent: fold,
+      onState: (next) => {
+        connection.value = next;
+      },
+      onError: (caught) => {
+        error.value = caught;
+      },
+      ...(options.createEventSource === undefined
+        ? {}
+        : { createEventSource: options.createEventSource }),
+      ...(options.schedule === undefined ? {} : { schedule: options.schedule }),
+      ...(options.cancelSchedule === undefined ? {} : { cancelSchedule: options.cancelSchedule }),
+      ...(options.backoffMs === undefined ? {} : { backoffMs: options.backoffMs }),
+      ...(options.maxAttempts === undefined ? {} : { maxAttempts: options.maxAttempts }),
+    });
   }
 
   // A new run id is a new stream, not the old one pointed somewhere else.
@@ -177,12 +214,15 @@ export function useRunProgress(
     () => toValue(runId),
     (id) => {
       events.value = [];
+      state.value = EMPTY;
       if (id === null) close();
       else open();
     },
   );
 
-  onScopeDispose(teardown);
+  // Guarantees the socket dies with the component, which a hand-rolled `onUnmounted`
+  // in three screens will not.
+  onScopeDispose(close);
 
-  return { events, latest, connection, attempt, error, open, close };
+  return { events, latest, state, connection, error, open, close };
 }

@@ -21,6 +21,9 @@ export default defineConfig({
         find: /^@rv\/shared-kernel$/,
         replacement: here('../../packages/shared-kernel/src/index.ts'),
       },
+      // The player's own tests assert that what it draws agrees with `evaluate(ir, t)`,
+      // which is only a real assertion if both sides are the same function.
+      { find: /^@rv\/anim-engine$/, replacement: here('../../packages/anim-engine/src/index.ts') },
     ],
   },
   // The source root, as a real filesystem path. A handful of specs scan the source

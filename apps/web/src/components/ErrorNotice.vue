@@ -24,8 +24,28 @@ const detail = computed(() => {
   if (props.error.failure === 'schema' && first !== undefined) {
     return t('errors.schemaMismatchDetail', { path: first.path });
   }
-  return props.error.message;
+  return '';
 });
+
+/**
+ * The server's own prose, and only the server's.
+ *
+ * `ApiError.message` is two different things wearing one field. When `failure` is
+ * `api` it is the server's report about a real refusal - "run would exceed the ceiling"
+ * - which a provider failure is undiagnosable without. When `failure` is `network` or
+ * `schema` it is a *client-side* English constant the studio wrote for itself, and
+ * rendering "the API could not be reached" inside a Persian interface is a defect: the
+ * catalogue already says that sentence in the reader's language, one line above.
+ *
+ * So the split is by origin, not by taste. Server text is shown as **data** - quoted,
+ * monospaced, tagged `lang="en" dir="ltr"` so a screen reader switches voice and the
+ * bidi algorithm does not scramble an English sentence inside a right-to-left paragraph
+ * - under a label that comes from the catalogue. The user-facing sentence is always
+ * `headline`, always translated.
+ */
+const serverReport = computed(() =>
+  props.error.failure === 'api' && props.error.message.length > 0 ? props.error.message : '',
+);
 </script>
 
 <template>
@@ -40,6 +60,10 @@ const detail = computed(() => {
     <div class="rv-error__body">
       <p class="rv-error__headline">{{ headline }}</p>
       <p v-if="detail" class="rv-error__detail">{{ detail }}</p>
+      <p v-if="serverReport" class="rv-error__detail">
+        <span class="rv-error__report-label">{{ t('errors.serverDetail') }}</span>
+        <q class="rv-error__report rv-mono" lang="en" dir="ltr">{{ serverReport }}</q>
+      </p>
       <p v-if="error.retryable" class="rv-error__detail">{{ t('errors.retryable') }}</p>
 
       <div class="rv-error__foot">
@@ -99,5 +123,18 @@ const detail = computed(() => {
 
 .rv-error__code {
   color: var(--rv-color-text-faint);
+}
+
+.rv-error__report-label {
+  color: var(--rv-color-text-faint);
+  margin-inline-end: var(--rv-space-2);
+}
+
+/* Quoted, so it reads as something that was said to us rather than something we are
+   saying. `unicode-bidi: isolate` keeps an English clause from reordering the Persian
+   around it. */
+.rv-error__report {
+  unicode-bidi: isolate;
+  color: var(--rv-color-text);
 }
 </style>

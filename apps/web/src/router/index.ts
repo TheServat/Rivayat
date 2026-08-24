@@ -1,9 +1,13 @@
 import { createRouter, createWebHistory, type RouteRecordRaw, type Router } from 'vue-router';
 
-import PlaceholderView from '../features/placeholder/PlaceholderView.vue';
-import type { PlaceholderTopic } from '../features/placeholder/topics';
+import AssetsView from '../features/assets/AssetsView.vue';
+import CharactersView from '../features/characters/CharactersView.vue';
 import ProjectsView from '../features/projects/ProjectsView.vue';
+import RenderView from '../features/render/RenderView.vue';
 import SettingsView from '../features/settings/SettingsView.vue';
+import StoryView from '../features/story/StoryView.vue';
+import StyleLabView from '../features/style-lab/StyleLabView.vue';
+import TimelineView from '../features/timeline/TimelineView.vue';
 
 /**
  * Every nav entry's message key, so the shell renders the menu from this list rather
@@ -22,71 +26,32 @@ export const NAV_KEYS = {
 
 export type NavName = keyof typeof NAV_KEYS;
 
-/** `true` for the two screens that are actually built. Rendered as a badge in the nav. */
+/**
+ * Which sections are built. Rendered as a badge in the nav.
+ *
+ * All eight, as of the six screens landing. Kept as a map rather than deleted because
+ * the nav reads it, and because a ninth section will start life as `false`.
+ */
 export const IMPLEMENTED: Readonly<Record<NavName, boolean>> = {
   projects: true,
-  'style-lab': false,
-  story: false,
-  characters: false,
-  assets: false,
-  timeline: false,
-  render: false,
+  'style-lab': true,
+  story: true,
+  characters: true,
+  assets: true,
+  timeline: true,
+  render: true,
   settings: true,
 };
-
-/**
- * Static props for a placeholder route.
- *
- * A function rather than an object literal so `exactOptionalPropertyTypes` sees a
- * definite value: `RouteRecordRaw['props']` includes `undefined`, and a helper typed
- * as that makes every route record optional-props and therefore unassignable.
- */
-function placeholder(
-  topic: PlaceholderTopic,
-  stories: readonly string[],
-): () => Record<string, unknown> {
-  return () => ({ topic, stories });
-}
 
 export const routes: readonly RouteRecordRaw[] = [
   { path: '/', redirect: '/projects' },
   { path: '/projects', name: 'projects', component: ProjectsView },
-  {
-    path: '/style-lab',
-    name: 'style-lab',
-    component: PlaceholderView,
-    props: placeholder('styleLab', ['RV-204']),
-  },
-  {
-    path: '/story',
-    name: 'story',
-    component: PlaceholderView,
-    props: placeholder('story', ['RV-205']),
-  },
-  {
-    path: '/characters',
-    name: 'characters',
-    component: PlaceholderView,
-    props: placeholder('characters', ['RV-206', 'RV-207']),
-  },
-  {
-    path: '/assets',
-    name: 'assets',
-    component: PlaceholderView,
-    props: placeholder('assets', ['RV-208', 'RV-209', 'RV-210']),
-  },
-  {
-    path: '/timeline',
-    name: 'timeline',
-    component: PlaceholderView,
-    props: placeholder('timeline', ['RV-211', 'RV-212']),
-  },
-  {
-    path: '/render',
-    name: 'render',
-    component: PlaceholderView,
-    props: placeholder('render', ['RV-213', 'RV-214', 'RV-215']),
-  },
+  { path: '/style-lab', name: 'style-lab', component: StyleLabView },
+  { path: '/story', name: 'story', component: StoryView },
+  { path: '/characters', name: 'characters', component: CharactersView },
+  { path: '/assets', name: 'assets', component: AssetsView },
+  { path: '/timeline', name: 'timeline', component: TimelineView },
+  { path: '/render', name: 'render', component: RenderView },
   { path: '/settings', name: 'settings', component: SettingsView },
   {
     path: '/:pathMatch(.*)*',

@@ -1,13 +1,34 @@
-import type { RunId } from '@rv/contracts';
+import {
+  AssetDemandPlan,
+  Project,
+  StyleBible,
+  type AnimationId,
+  type AssetId,
+  type AssetVersionId,
+  type RegenerateIntent,
+  type RunId,
+  type Slug,
+  type StyleBibleId,
+} from '@rv/contracts';
 
 import { FixtureTransport } from './fixtures/fixture-transport';
+import { AnimationIR, AnimationIndex } from './schemas/animations';
+import {
+  Asset,
+  AssetLibraryPage,
+  AssetProduceReport,
+  AssetSearchHits,
+  RegenerateOutcome,
+} from './schemas/assets';
 import { ProjectList } from './schemas/pending-contracts';
+import type { NewProjectDraft } from './schemas/projects';
 import {
   type SettingsPatch,
   type SettingsScopeRef,
   SettingsSnapshot,
   type WritableSettingsScope,
 } from './schemas/settings';
+import { StylePresetList, StyleProbeSheet, type StyleProbeLane } from './schemas/style';
 import { HttpTransport, type StudioTransport } from './transport';
 
 /**
@@ -30,6 +51,92 @@ export class StudioApi {
       method: 'GET',
       path: '/projects',
       schema: ProjectList,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /**
+   * Starts a project.
+   *
+   * Returns the aggregate rather than the summary, because that is what the API
+   * answers: `spentNanoUsd` and `episodeCount` are joins over runs and episodes that a
+   * project one millisecond old has none of. The list is reloaded afterwards rather
+   * than patched from this, so the row a user sees is the one the server would send.
+   */
+  createProject(draft: NewProjectDraft, signal?: AbortSignal): Promise<Project> {
+    return this.transport.send({
+      method: 'POST',
+      path: '/projects',
+      schema: Project,
+      body: draft,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  // ── S1 style ────────────────────────────────────────────────────────
+
+  /**
+   * The curated shelf.
+   *
+   * Typed against {@link StylePresetList}, which is wider than what the route returns
+   * today - see the table in `schemas/style.ts` for what the API owes this call and
+   * why a list of slugs cannot drive the gallery.
+   */
+  listStylePresets(signal?: AbortSignal): Promise<StylePresetList> {
+    return this.transport.send({
+      method: 'GET',
+      path: '/style/presets',
+      schema: StylePresetList,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /** Materialises a preset into a real bible with an id and a checksum. */
+  styleFromPreset(preset: Slug, signal?: AbortSignal): Promise<StyleBible> {
+    return this.transport.send({
+      method: 'POST',
+      path: '/style/from-preset',
+      schema: StyleBible,
+      body: { preset },
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /**
+   * Four tiles, so a human can say yes before anything expensive happens.
+   *
+   * **No route answers this yet.** `apps/api` exposes presets, from-preset, derive and
+   * lock; the probe use-case is built in `@rv/style-engine` and unbound. The call is
+   * written here rather than omitted so the screen has one place to point when it
+   * lands, and so the failure a user sees is the API's own refusal rather than a
+   * disabled button with no explanation.
+   */
+  probeStyle(
+    id: StyleBibleId,
+    lane: StyleProbeLane,
+    signal?: AbortSignal,
+  ): Promise<StyleProbeSheet> {
+    return this.transport.send({
+      method: 'POST',
+      path: `/style/${id}/probe`,
+      schema: StyleProbeSheet,
+      body: { lane },
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /**
+   * Freezes the checksum.
+   *
+   * The one irreversible action the studio can take from a screen: every asset dedup
+   * key downstream is derived from the value this call fixes, so locking a different
+   * bible forks the whole asset library rather than reusing it.
+   */
+  lockStyle(id: StyleBibleId, signal?: AbortSignal): Promise<StyleBible> {
+    return this.transport.send({
+      method: 'POST',
+      path: `/style/${id}/lock`,
+      schema: StyleBible,
       ...(signal === undefined ? {} : { signal }),
     });
   }
@@ -72,6 +179,141 @@ export class StudioApi {
   }
 
   /** SSE endpoint for a run's progress, or `null` when the transport has no stream. */
+  // ── S6 assets ───────────────────────────────────────────────────────
+
+  /**
+   * The library.
+   *
+   * `GET /assets` does not exist in `apps/api` yet - see the endpoint table in
+   * `schemas/assets.ts`. The call is made anyway rather than stubbed, so the day the
+   * controller lands the screen is already pointed at it, and until then the store
+   * turns the 404 into a named `unavailable` state instead of a red banner.
+   */
+  listAssets(query: string, signal?: AbortSignal): Promise<AssetLibraryPage> {
+    const suffix = query.trim() === '' ? '' : `?query=${encodeURIComponent(query.trim())}`;
+    return this.transport.send({
+      method: 'GET',
+      path: `/assets${suffix}`,
+      schema: AssetLibraryPage,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /** One asset with its whole version tree. Live: `AssetsController.findOne`. */
+  getAsset(assetId: AssetId, signal?: AbortSignal): Promise<Asset> {
+    return this.transport.send({
+      method: 'GET',
+      path: `/assets/${assetId}`,
+      schema: Asset,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /**
+   * Reuse before regrowth.
+   *
+   * Live, and **not free**: it embeds the query string, which is one provider call. So
+   * it is submit-driven rather than keystroke-driven - a search-as-you-type box here
+   * would bill for every character.
+   */
+  searchAssets(query: string, signal?: AbortSignal): Promise<AssetSearchHits> {
+    return this.transport.send({
+      method: 'POST',
+      path: '/assets/search',
+      schema: AssetSearchHits,
+      body: { query, limit: 10 },
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /**
+   * The plan, before anything is spent.
+   *
+   * `POST /assets/resolve` is live and is the authoritative one, but it takes a list of
+   * `AssetSpec`s and the studio has no source of those - specs come out of the story
+   * stage, which has no endpoint. So the screen asks for the plan of the library's
+   * current demand, which is the read-only half of the same use-case.
+   *
+   * **Two path segments, deliberately.** `AssetsController` declares `@Get(':id')`, and
+   * Nest matches any single segment under `/assets` against it - so `GET /assets/plan`
+   * comes back as a *400 about a malformed AssetId* rather than a 404, and the screen
+   * would show a red banner about a server that is merely missing a route. Verified
+   * against the running API, not reasoned about: `/assets/plan` answers 400 and
+   * `/assets/demand/plan` answers 404.
+   */
+  planAssets(signal?: AbortSignal): Promise<AssetDemandPlan> {
+    return this.transport.send({
+      method: 'GET',
+      path: '/assets/demand/plan',
+      schema: AssetDemandPlan,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /** Where one take stopped in the eight-step produce chain, and why. */
+  getProduceReport(
+    assetId: AssetId,
+    versionId: AssetVersionId,
+    signal?: AbortSignal,
+  ): Promise<AssetProduceReport> {
+    return this.transport.send({
+      method: 'GET',
+      path: `/assets/${assetId}/versions/${versionId}/produce`,
+      schema: AssetProduceReport,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /**
+   * A deliberate second take.
+   *
+   * The body is a `RegenerateIntent` - the contract schema, whose `keepPrevious` is a
+   * `z.literal(true)` precisely so that an attempt to set it false is a visible diff
+   * rather than a silent overwrite. Nothing in the studio constructs one without a
+   * reason the user chose.
+   */
+  regenerateAsset(
+    assetId: AssetId,
+    intent: RegenerateIntent,
+    signal?: AbortSignal,
+  ): Promise<RegenerateOutcome> {
+    return this.transport.send({
+      method: 'POST',
+      path: `/assets/${assetId}/regenerate`,
+      schema: RegenerateOutcome,
+      body: intent,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  // ── S7 animation ────────────────────────────────────────────────────
+
+  /** Every animation the timeline can open. No controller serves this yet. */
+  listAnimations(signal?: AbortSignal): Promise<AnimationIndex> {
+    return this.transport.send({
+      method: 'GET',
+      path: '/animations',
+      schema: AnimationIndex,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /**
+   * One `AnimationIR`, parsed by the contract schema.
+   *
+   * The same object `evaluate(ir, t)` is typed against, and the same one the renderer
+   * consumes. A document that does not satisfy the IR's refinements - a cycle in the
+   * node hierarchy, a track on an unknown node - never reaches the player.
+   */
+  getAnimation(animationId: AnimationId, signal?: AbortSignal): Promise<AnimationIR> {
+    return this.transport.send({
+      method: 'GET',
+      path: `/animations/${animationId}`,
+      schema: AnimationIR,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
   runStreamUrl(runId: RunId): string | null {
     return this.transport.eventSourceUrl(`/runs/${runId}/events`);
   }

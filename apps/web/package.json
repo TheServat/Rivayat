@@ -17,6 +17,7 @@
   "dependencies": {
     "@fontsource-variable/vazirmatn": "5.3.0",
     "@phosphor-icons/vue": "2.2.1",
+    "@rv/anim-engine": "workspace:*",
     "@rv/contracts": "workspace:*",
     "@rv/shared-kernel": "workspace:*",
     "@vueuse/core": "14.4.0",
