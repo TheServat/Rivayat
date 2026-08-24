@@ -25,6 +25,14 @@ settings object beside it, and one **has no way to name an emotion at all** — 
 single scalar. And the finding that reorganised this whole layer: **Chatterbox's stock
 multilingual weights do not speak Persian**, which is the series language.
 
+> **Status, 2026-08-24.** The owner is fine-tuning Chatterbox for Persian and owns that
+> work. Until those weights exist, **English is the working language for voice** - which
+> the owner has confirmed is acceptable for the sample. This is a schedule fact, not a
+> design change: the adapter already declares its language by the weights it loaded
+> rather than by the vendor's name, precisely so a community or in-house fine-tune drops
+> into the same seam. Nobody should record `Chatterbox cannot speak Persian` as a
+> blocker again - it has an owner and a plan, and the port was shaped for it.
+
 ## Decision
 
 ### 1. The emotion vocabulary is declared once, with two numbers per member
