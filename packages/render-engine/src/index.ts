@@ -195,6 +195,16 @@ export type {
 } from './reframe/solve-crop';
 export { cropAtProgress, feasibleInterval, solveShotCrop } from './reframe/solve-crop';
 export type { BuildPlanOptions, ReframeInput } from './reframe/reframe-plan';
+/**
+ * Scene space to composition fractions, camera included.
+ *
+ * Pure geometry with no dependency on this package, headed for `@rv/anim-engine` beside
+ * the bezier solver. Exported here so the studio preview and the exporters can converge on
+ * it now rather than after the move.
+ */
+export type { ProjectedCamera } from './scene-projection';
+export { IDENTITY_CAMERA, projectToNorm } from './scene-projection';
+
 export { buildReframePlan, buildReframePlans } from './reframe/reframe-plan';
 export type { SampleFocusOptions } from './reframe/focus-track';
 export {

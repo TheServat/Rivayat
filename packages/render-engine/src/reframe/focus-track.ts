@@ -21,6 +21,7 @@ import { evaluate } from '@rv/anim-engine';
 import type { AnimationIR, MotionStyle, NodeId, NormRect } from '@rv/contracts';
 
 import { clamp } from './geometry';
+import { IDENTITY_CAMERA, projectToNorm } from '../scene-projection';
 import type { FocusSample } from './solve-crop';
 
 export interface SampleFocusOptions {
@@ -65,10 +66,17 @@ export function sampleFocusTrack(
     // A node the snapshot does not contain cannot be followed. `FocusTarget.region` is
     // documented as "the tie-breaker for the frames the instance does not exist in", so
     // that is exactly what is used.
+    //
+    // Projected, not merely normalised. The crop is applied to the rendered master, which
+    // carries the camera; locating the subject on the authoring canvas instead answers a
+    // different question and gets the crop wrong for every shot whose camera moves.
     const region =
       resolved === undefined
         ? baseRegion
-        : centreRegionOn(baseRegion, worldToNorm(resolved.worldTransform.position, ir.sceneSpace));
+        : centreRegionOn(
+            baseRegion,
+            projectToNorm(resolved.worldTransform.position, snapshot.camera, ir.sceneSpace),
+          );
     samples.push({ timeMs: offsetMs, region });
   }
 
@@ -81,17 +89,24 @@ export function staticFocusTrack(region: NormRect): readonly FocusSample[] {
 }
 
 /**
- * Scene coordinates to composition fractions.
+ * Scene coordinates to composition fractions, **with no camera applied**.
  *
  * Mirrors `frames/draw-list.ts`'s convention - the scene-space origin is the *centre*
  * of the canvas - because the reframer and the rasteriser must agree about where the
  * middle is or every crop is off by half a frame.
+ *
+ * This is the origin conversion and nothing more, which is exactly why it is the wrong
+ * function to locate a subject for cropping: the master has the camera baked in, so a
+ * node is only *here* when the camera happens to be an identity. Using it for that is the
+ * bug `scene-projection.ts` documents. It is kept because the conversion itself is a
+ * legitimate primitive - and it is defined as the identity-camera case of
+ * {@link projectToNorm} rather than restated, so the two cannot drift.
  */
 export function worldToNorm(
   position: { readonly x: number; readonly y: number },
   scene: { readonly width: number; readonly height: number },
 ): { x: number; y: number } {
-  return { x: position.x / scene.width + 0.5, y: position.y / scene.height + 0.5 };
+  return projectToNorm(position, IDENTITY_CAMERA, scene);
 }
 
 /**
