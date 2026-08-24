@@ -20,6 +20,7 @@ import { parseOrThrow, type StudioTransport, type TransportRequest } from '../tr
 
 import { PROJECT_FIXTURES } from './projects.fixture';
 import { MODEL_CHOICES, SETTING_DESCRIPTORS, SETTING_LAYER_VALUES } from './settings.fixture';
+import { renderRoutes } from './render-routes';
 import { StudioFixtureRoutes, isNotFound } from './studio-routes';
 import { STYLE_PRESET_FIXTURES } from './style.fixture';
 
@@ -125,6 +126,15 @@ export class FixtureTransport implements StudioTransport {
       this.#applyPatch(scope, patch);
       return this.#respond(request, this.#snapshot(patch.scope));
     }
+
+    // The render screen's formats, runs and cost, in their own table.
+    const render = renderRoutes({
+      method: request.method,
+      path,
+      query: new URLSearchParams(query),
+      body: request.body,
+    });
+    if (render !== undefined) return this.#respond(request, render.payload);
 
     // The asset library and the animation index, in their own table. Last, so a route
     // declared above always wins and this can never shadow one.
