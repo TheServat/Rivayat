@@ -64,8 +64,32 @@ const PAINT: Readonly<Record<string, Painted>> = {
   'wing-r': { fill: INK.bird, shape: 'ellipse', width: 54, height: 12 },
 };
 
+/**
+ * Where the wings meet the body, measured from the bird's own origin.
+ *
+ * The body is anchored bottom-centre, so it spans -20..0 vertically and its centre of
+ * mass is at -10. The shoulder sits just above that, which puts the pivot well inside the
+ * body ellipse - the condition that keeps the joint shut at every flap angle.
+ */
+const SHOULDER_Y = -12;
+
+/** Crockford base32: no I, L, O or U, because those read as 1, 1, 0 and V. */
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+/**
+ * A deterministic stand-in for a real ULID.
+ *
+ * Twenty-six Crockford characters, not twenty-five of base36. The ids this used to emit
+ * were a character short and drew on an alphabet that includes `I`, `L`, `O` and `U`, so
+ * every node in the flagship demo scene failed `NodeId` - which nobody noticed, because
+ * the scene is cast to `AnimationIR` and never parsed.
+ */
 function id(prefix: string, n: number): string {
-  return `${prefix}_01J8ZQ4E7K9M2N4P6R8T0V${n.toString(36).toUpperCase().padStart(3, '0')}`;
+  let suffix = '';
+  for (let value = n, digit = 0; digit < 3; digit += 1, value = Math.floor(value / 32)) {
+    suffix = CROCKFORD.charAt(value % 32) + suffix;
+  }
+  return `${prefix}_01J8ZQ4E7K9M2N4P6R8T0VA${suffix}`;
 }
 
 let counter = 0;
@@ -85,18 +109,44 @@ export function buildGroveScene(): { ir: AnimationIR; focusNodeName: string } {
   const behaviours: unknown[] = [];
   const byName = new Map<string, string>();
 
+  /**
+   * The node's own geometry, mirrored from the paint table.
+   *
+   * A `shape` node states its `size` in the document, which is what lets
+   * `rv anim lint --geometry` measure the silhouette this scene will actually draw
+   * instead of taking the renderer's word for it. `PAINT` stays the single place a size
+   * is written down; the node reflects it rather than restating it.
+   */
+  const geometryOf = (name: string): Record<string, unknown> => {
+    const paint = PAINT[name];
+    if (paint === undefined) return { kind: 'group' };
+    return {
+      kind: 'shape',
+      shape: paint.shape,
+      size: { width: paint.width, height: paint.height },
+      fill: paint.fill,
+      strokeWidth: 0,
+    };
+  };
+
+  /**
+   * `anchor` defaults to bottom-centre, which is right for anything that stands on the
+   * ground and rotates about its base. It is a **default and not a rule**: a limb rotates
+   * about the joint that carries it, and a helper that silently imposed bottom-centre on
+   * every node is what put a hole through the bird.
+   */
   const add = (
     name: string,
     parent: string | null,
     x: number,
     y: number,
     depth: number,
-    extra: Record<string, unknown> = {},
+    anchor: { x: number; y: number } = { x: 0.5, y: 1 },
   ): string => {
     const nodeId = nid();
     byName.set(name, nodeId);
     nodes.push({
-      kind: 'group',
+      ...geometryOf(name),
       id: nodeId,
       name,
       parentId: parent,
@@ -105,12 +155,11 @@ export function buildGroveScene(): { ir: AnimationIR; focusNodeName: string } {
         rotation: 0,
         scale: { x: 1, y: 1 },
         skew: { x: 0, y: 0 },
-        anchor: { x: 0.5, y: 1 },
+        anchor,
         opacity: 1,
       },
       visible: true,
       depth,
-      ...extra,
     });
     return nodeId;
   };
@@ -132,19 +181,7 @@ export function buildGroveScene(): { ir: AnimationIR; focusNodeName: string } {
   for (const [index, tree] of trees.entries()) {
     const trunk = add(`trunk-${tree.name}`, root, tree.x, tree.ground, tree.depth);
     const paint = PAINT[`trunk-${tree.name}`];
-    const canopy = add(`canopy-${tree.name}`, trunk, 0, -(paint?.height ?? 200), tree.depth, {
-      transform: undefined,
-    });
-    // `transform: undefined` above would break the schema; set it properly instead.
-    const canopyNode = nodes[nodes.length - 1] as Record<string, unknown>;
-    canopyNode.transform = {
-      position: { x: 0, y: -(paint?.height ?? 200) },
-      rotation: 0,
-      scale: { x: 1, y: 1 },
-      skew: { x: 0, y: 0 },
-      anchor: { x: 0.5, y: 1 },
-      opacity: 1,
-    };
+    const canopy = add(`canopy-${tree.name}`, trunk, 0, -(paint?.height ?? 200), tree.depth);
 
     behaviours.push({
       id: bid(),
@@ -189,11 +226,18 @@ export function buildGroveScene(): { ir: AnimationIR; focusNodeName: string } {
     phase: 0,
   });
 
-  for (const [side, offset] of [
-    ['wing-l', -22],
-    ['wing-r', 22],
+  // Each wing pivots at its **shoulder**: the wing's own inner end, at mid-height, placed
+  // on the body rather than beside it. The rig this replaced left every node at the
+  // helper's bottom-centre default, so a wing rotated about a point 22 px clear of the
+  // body and swung its root away from it - opening a triangular hole through the bird in
+  // every frame of `workspace/demo/grove-16x9.mp4`. The invariant is geometric and
+  // `checkGeometry` now enforces it: a joint stays shut under any rotation exactly when
+  // the child's pivot lies inside the parent's silhouette.
+  for (const [side, shoulderX, anchorX] of [
+    ['wing-l', -6, 1],
+    ['wing-r', 6, 0],
   ] as const) {
-    const wing = add(side, bird, offset, 0, 10);
+    const wing = add(side, bird, shoulderX, SHOULDER_Y, 10, { x: anchorX, y: 0.5 });
     behaviours.push({
       id: bid(),
       kind: 'flap',

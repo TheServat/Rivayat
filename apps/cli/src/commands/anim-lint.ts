@@ -7,7 +7,7 @@
  * you can jump to, a stable code you can grep for, and a sentence that names the thing
  * that is wrong rather than the rule that caught it.
  *
- * Two layers, and the split matters. **Errors** come from `AnimationIR` in
+ * Three layers, and the split matters. **Schema errors** come from `AnimationIR` in
  * `@rv/contracts` - duplicate node ids, unknown parents, hierarchy cycles, tracks and
  * behaviours pointing at nothing, part/bone overrides of a non-instance. Those are the
  * schema's own `superRefine` checks and this file does not restate one of them, because
@@ -16,14 +16,34 @@
  * silently swallow: a keyframe past the end of the timeline, a behaviour window outside
  * it, two nodes with the same name, a marker nobody will ever reach.
  *
+ * **Geometry errors** are the third layer, and they exist because the first two are not
+ * enough. A document can satisfy every schema rule, render a bit-reproducible frame, and
+ * still put a triangular hole through a bird - because nothing above this line looks at
+ * the *picture*. `checkGeometry` in `@rv/anim-engine` samples the clip and measures each
+ * node's silhouette against its neighbours, so "the wing came away from the body at
+ * 340 ms" arrives as a diagnostic with a node, a frame and a distance instead of as
+ * something a human has to notice in a finished video.
+ *
+ * They are errors rather than warnings because a broken picture is not something a
+ * renderer swallows - it is something a viewer sees. Geometry is measured only for nodes
+ * whose size the document declares, and when nothing is measurable the report says so out
+ * loud: a gate that inspected nothing must never be mistaken for a gate that found
+ * nothing.
+ *
  * Exit code 3, not 1: the tool worked perfectly and the file did not. A CI job that
  * retries on 1 must not retry this.
  */
 
 import { readFile } from 'node:fs/promises';
 
+import {
+  checkGeometry,
+  type GeometryCheckOptions,
+  type GeometryFinding,
+  type GeometryReport,
+} from '@rv/anim-engine';
 import { AnimationIR } from '@rv/contracts';
-import { NotFoundError } from '@rv/shared-kernel';
+import { NotFoundError, must } from '@rv/shared-kernel';
 
 import { flag, positional, type ParsedArgs } from '../cli/args';
 import type { Command } from '../cli/command';
@@ -48,6 +68,33 @@ export interface LintReport {
   readonly diagnostics: readonly Diagnostic[];
   readonly errorCount: number;
   readonly warningCount: number;
+  /**
+   * What the geometry pass actually looked at.
+   *
+   * Present whenever the document parsed, absent when it did not. `measuredNodes: 0` is
+   * the shape of "this file declares no sizes, so nothing was measured", which a caller
+   * has to be able to tell apart from "measured everything, found nothing".
+   */
+  readonly geometry?: {
+    readonly measuredNodes: number;
+    readonly unmeasuredNodes: number;
+    readonly joints: number;
+    readonly sampledFrames: number;
+    readonly toleranceScenePx: number;
+  };
+}
+
+export interface LintOptions {
+  /**
+   * Passed through to `checkGeometry`.
+   *
+   * Two of the geometry checks need something the document cannot supply on its own: a
+   * scene box to be contained by, and permission to judge the camera's focus. Both are
+   * off unless a caller asks, because "outside the scene box" is normal for a sky and
+   * because `apps/cli` and `@rv/render-engine` do not currently agree on where scene
+   * space's origin is - a linter is the wrong place to settle that.
+   */
+  readonly geometry?: GeometryCheckOptions;
 }
 
 /**
@@ -57,7 +104,7 @@ export interface LintReport {
  * function of a value - which is what lets the specs cover every diagnostic without a
  * temporary directory.
  */
-export function lintAnimationDocument(document: unknown): LintReport {
+export function lintAnimationDocument(document: unknown, options: LintOptions = {}): LintReport {
   const parsed = AnimationIR.safeParse(document);
   if (!parsed.success) {
     const diagnostics = parsed.error.issues.map<Diagnostic>((issue) => ({
@@ -68,8 +115,117 @@ export function lintAnimationDocument(document: unknown): LintReport {
     }));
     return { diagnostics, errorCount: diagnostics.length, warningCount: 0 };
   }
-  const warnings = semanticWarnings(parsed.data);
-  return { diagnostics: warnings, errorCount: 0, warningCount: warnings.length };
+  const report = checkGeometry(parsed.data, options.geometry ?? {});
+  const diagnostics = [
+    ...geometryDiagnostics(parsed.data, report),
+    ...semanticWarnings(parsed.data),
+  ];
+  return {
+    diagnostics,
+    errorCount: diagnostics.filter((diagnostic) => diagnostic.severity === 'error').length,
+    warningCount: diagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length,
+    geometry: {
+      measuredNodes: report.measuredNodes,
+      unmeasuredNodes: report.unmeasuredNodes,
+      joints: report.joints,
+      sampledFrames: report.sampledFrames,
+      toleranceScenePx: report.toleranceScenePx,
+    },
+  };
+}
+
+/**
+ * Which field a reader should go and edit, per finding.
+ *
+ * A total record rather than a `switch`, so a sixth check in `@rv/anim-engine` becomes a
+ * compile error here instead of a diagnostic that unhelpfully points at the whole node.
+ */
+const GEOMETRY_PATHS: Readonly<Record<GeometryFinding['code'], string>> = {
+  'joint.pivot-outside-parent': 'transform.anchor',
+  'joint.opened': 'transform.position',
+  'silhouette.area-discontinuity': 'transform',
+  'scene.out-of-bounds': 'transform.position',
+  'camera.focus-out-of-frame': 'transform.position',
+};
+
+/**
+ * Geometry findings, turned into diagnostics somebody can act on.
+ *
+ * Every message names the node rather than its id, quotes the measurement against the
+ * tolerance it was judged by, and says which frame to look at - a finding without a
+ * reproduction is an opinion.
+ */
+function geometryDiagnostics(ir: AnimationIR, report: GeometryReport): readonly Diagnostic[] {
+  const indexOf = new Map(ir.nodes.map((node, index) => [node.id, index]));
+  const nameOf = new Map(ir.nodes.map((node) => [node.id, node.name]));
+
+  // `must` rather than a fallback: every id in a finding came out of this document, so a
+  // miss is a broken invariant and not a node whose name we should invent.
+  const diagnostics = report.findings.map<Diagnostic>((finding) => {
+    const name = must(nameOf, finding.nodeId, 'node name');
+    const related =
+      finding.relatedNodeId === undefined
+        ? name
+        : must(nameOf, finding.relatedNodeId, 'related node name');
+    return {
+      severity: 'error',
+      code: finding.code,
+      path: `nodes.${String(must(indexOf, finding.nodeId, 'node index'))}.${GEOMETRY_PATHS[finding.code]}`,
+      message: geometryMessage(finding, name, related),
+    };
+  });
+
+  if (report.measuredNodes > 0) return diagnostics;
+  return [
+    ...diagnostics,
+    {
+      severity: 'warning',
+      code: 'geometry.nothing-measured',
+      path: 'nodes',
+      message:
+        'no node in this document declares a size, so no geometry was checked; give shape ' +
+        'nodes a `size` or the silhouette checks cannot see this document at all',
+    },
+  ];
+}
+
+/**
+ * One sentence per finding, in the words that say what to change.
+ *
+ * A lookup rather than a chain of `if`s, for the same reason as {@link GEOMETRY_PATHS}:
+ * an unhandled code should not be able to fall through to a generic sentence.
+ */
+const GEOMETRY_MESSAGES: Readonly<
+  Record<GeometryFinding['code'], (name: string, related: string, amount: string) => string>
+> = {
+  'joint.pivot-outside-parent': (name, related, amount) =>
+    `"${name}" overlaps "${related}" at rest but rotates about a pivot ${amount} outside ` +
+    'it; a joint stays shut under rotation only while the child pivot lies inside the ' +
+    'parent, so this one prises itself open as soon as anything turns it',
+  'joint.opened': (name, related, amount) =>
+    `"${name}" has come away from "${related}" by ${amount}`,
+  'silhouette.area-discontinuity': (name, _related, amount) =>
+    `"${name}" changes area discontinuously: ${amount} of the change falls inside one ` +
+    'sub-frame interval, which is a pop rather than motion',
+  'scene.out-of-bounds': (name, _related, amount) =>
+    `"${name}" reaches ${amount} outside the scene box`,
+  'camera.focus-out-of-frame': (name, _related, amount) =>
+    `"${name}" is the camera focus and sits ${amount} outside the frame`,
+};
+
+const GEOMETRY_UNIT_LABELS: Readonly<Record<GeometryFinding['unit'], string>> = {
+  'scene-px': 'scene px',
+  ratio: '',
+};
+
+function geometryMessage(finding: GeometryFinding, name: string, related: string): string {
+  const unit = GEOMETRY_UNIT_LABELS[finding.unit];
+  const amount = `${finding.measured.toFixed(2)}${unit === '' ? '' : ` ${unit}`}`;
+  const sentence = GEOMETRY_MESSAGES[finding.code](name, related, amount);
+  return (
+    `${sentence} at frame ${String(finding.frame)} (${String(finding.timeMs)} ms); ` +
+    `tolerance is ${finding.tolerance.toFixed(2)}${unit === '' ? '' : ` ${unit}`}`
+  );
 }
 
 /**
@@ -238,6 +394,9 @@ function emit(
   context.io.out();
   if (report.diagnostics.length === 0) {
     context.io.out(`  ${path}: clean`);
+    // "Clean" without saying what was inspected is the assurance this whole gate exists
+    // to stop being given.
+    context.io.out(`  ${measuredLine(report)}`);
     context.io.out();
     return EXIT.ok;
   }
@@ -258,6 +417,19 @@ function emit(
   context.io.out(
     `  ${String(report.errorCount)} error(s), ${String(report.warningCount)} warning(s) in ${path}`,
   );
+  context.io.out(`  ${measuredLine(report)}`);
   context.io.out();
   return bad ? EXIT.findings : EXIT.ok;
+}
+
+/** What the geometry pass covered, so "clean" is never an unqualified claim. */
+function measuredLine(report: LintReport): string {
+  const geometry = report.geometry;
+  if (geometry === undefined) return 'geometry not checked: the document did not parse';
+  return (
+    `geometry: ${String(geometry.measuredNodes)} of ` +
+    `${String(geometry.measuredNodes + geometry.unmeasuredNodes)} nodes measured, ` +
+    `${String(geometry.joints)} joint(s), ${String(geometry.sampledFrames)} frame(s), ` +
+    `tolerance ${geometry.toleranceScenePx.toFixed(2)} scene px`
+  );
 }

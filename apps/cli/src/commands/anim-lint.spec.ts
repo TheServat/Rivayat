@@ -10,7 +10,14 @@ import {
   irWithCycle,
   irWithDanglingTrack,
   irWithLateKeyframe,
+  NODE_B,
+  irWithLimbDraggedOffTheBody,
+  irWithNoDeclaredSizes,
+  irWithPartThatPops,
+  irWithSubjectOffCanvas,
   irWithSilentBehaviour,
+  irWithWingPivotedAtTheShoulder,
+  irWithWingPivotedOffTheBody,
   validIr,
 } from '../__fixtures__/animation';
 import { jsonOut, makeHarness, type Harness } from '../__fixtures__/harness';
@@ -129,5 +136,136 @@ describe('rv anim lint', () => {
     const envelope = jsonOut(harness.io);
     expect(envelope.ok).toBe(true);
     expect((envelope.data as { errorCount: number }).errorCount).toBe(0);
+  });
+});
+
+describe('the geometry pass', () => {
+  it('names the node, the parent and the distance when a joint is rigged to open', () => {
+    const report = lintAnimationDocument(irWithWingPivotedOffTheBody());
+    const finding = report.diagnostics.find((d) => d.code === 'joint.pivot-outside-parent');
+
+    expect(finding?.severity).toBe('error');
+    expect(finding?.path).toBe('nodes.1.transform.anchor');
+    expect(finding?.message).toContain('"wing-l"');
+    expect(finding?.message).toContain('"bird"');
+    expect(report.errorCount).toBeGreaterThan(0);
+  });
+
+  it('goes quiet on the same two nodes once the wing pivots at its shoulder', () => {
+    const report = lintAnimationDocument(irWithWingPivotedAtTheShoulder());
+    expect(report.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(report.geometry?.joints).toBe(1);
+  });
+
+  it('reports what it measured, so a clean run is a claim about something', () => {
+    const report = lintAnimationDocument(irWithWingPivotedAtTheShoulder());
+    expect(report.geometry).toEqual({
+      measuredNodes: 2,
+      unmeasuredNodes: 0,
+      joints: 1,
+      sampledFrames: 24,
+      toleranceScenePx: 0.5,
+    });
+  });
+
+  it('warns rather than passing silently when no node declares a size', () => {
+    const report = lintAnimationDocument(irWithNoDeclaredSizes());
+    const warning = report.diagnostics.find((d) => d.code === 'geometry.nothing-measured');
+    expect(warning?.severity).toBe('warning');
+    expect(report.geometry?.measuredNodes).toBe(0);
+  });
+
+  it('reports no geometry at all for a document that did not parse', () => {
+    expect(lintAnimationDocument({ hello: 'world' }).geometry).toBeUndefined();
+  });
+});
+
+describe('rv anim lint, on a rig that draws a hole', () => {
+  let harness: Harness;
+  let dir: string;
+
+  beforeEach(async () => {
+    harness = await makeHarness();
+    dir = await mkdtemp(join(tmpdir(), 'rv-anim-geo-'));
+  });
+
+  afterEach(async () => {
+    await harness.dispose();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function lint(document: unknown, ...extra: string[]): Promise<number> {
+    const file = join(dir, 'scene.rvanim.json');
+    await writeFile(file, JSON.stringify(document), 'utf8');
+    return animLintCommand.run(
+      harness.context,
+      parseArgs([file, ...extra], { booleans: ['json', 'strict'] }),
+    );
+  }
+
+  it('exits with findings and carries the geometry summary into the JSON report', async () => {
+    const code = await lint(irWithWingPivotedOffTheBody(), '--json');
+    expect(code).toBe(EXIT.findings);
+
+    const payload = jsonOut(harness.io).data as {
+      geometry: { measuredNodes: number; joints: number };
+      diagnostics: { code: string }[];
+    };
+    expect(payload.diagnostics.map((d) => d.code)).toContain('joint.pivot-outside-parent');
+    expect(payload.geometry).toMatchObject({ measuredNodes: 2, joints: 1 });
+  });
+
+  it('exits clean on the shoulder-pivoted rig and says how much it looked at', async () => {
+    const code = await lint(irWithWingPivotedAtTheShoulder());
+    expect(code).toBe(EXIT.ok);
+    expect(harness.io.outText).toContain('2 of 2 nodes measured');
+  });
+});
+
+describe('the geometry pass, on the checks a document cannot ask for by itself', () => {
+  it('names the gap and the frame when a part has come away from its parent', () => {
+    const report = lintAnimationDocument(irWithLimbDraggedOffTheBody());
+    const opened = report.diagnostics.find((d) => d.code === 'joint.opened');
+
+    expect(opened?.severity).toBe('error');
+    expect(opened?.path).toBe('nodes.1.transform.position');
+    expect(opened?.message).toContain('"limb"');
+    expect(opened?.message).toContain('"trunk"');
+    expect(opened?.message).toContain('frame 23');
+  });
+
+  it('reports a part that stops being drawn, in a unit that is not pixels', () => {
+    const report = lintAnimationDocument(irWithPartThatPops());
+    const popped = report.diagnostics.find((d) => d.code === 'silhouette.area-discontinuity');
+
+    expect(popped?.severity).toBe('error');
+    expect(popped?.path).toBe('nodes.1.transform');
+    // A ratio carries no unit, and the sentence must not invent one.
+    expect(popped?.message).not.toContain('scene px');
+    expect(popped?.message).toContain('pop rather than motion');
+  });
+
+  it('says nothing about the scene box or the camera frame unless asked', () => {
+    const report = lintAnimationDocument(irWithSubjectOffCanvas());
+    expect(report.diagnostics.map((d) => d.code)).not.toContain('scene.out-of-bounds');
+    expect(report.diagnostics.map((d) => d.code)).not.toContain('camera.focus-out-of-frame');
+  });
+
+  it('reports a node that left the scene box, once a caller says which nodes must stay', () => {
+    const report = lintAnimationDocument(irWithSubjectOffCanvas(), {
+      geometry: { containedNodeIds: [NODE_B] },
+    });
+    const out = report.diagnostics.find((d) => d.code === 'scene.out-of-bounds');
+    expect(out?.message).toContain('"disc"');
+    expect(out?.message).toContain('outside the scene box');
+  });
+
+  it('reports a camera that has lost its focus target, once asked to look', () => {
+    const report = lintAnimationDocument(irWithSubjectOffCanvas(), {
+      geometry: { checkCameraFocus: true },
+    });
+    const lost = report.diagnostics.find((d) => d.code === 'camera.focus-out-of-frame');
+    expect(lost?.message).toContain('"disc"');
+    expect(lost?.message).toContain('outside the frame');
   });
 });
