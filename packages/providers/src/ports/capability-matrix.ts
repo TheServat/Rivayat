@@ -31,6 +31,7 @@ import type { EmbeddingPort } from './embedding';
 import type { ImageEditPort } from './image-edit';
 import type { ImageGenerationPort } from './image-generation';
 import type { ProviderAdapter } from './provider-adapter';
+import type { SpeechSynthesisPort } from './speech-synthesis';
 import type { TextGenerationPort } from './text-generation';
 import type { VisionScoringPort } from './vision-scoring';
 
@@ -48,6 +49,7 @@ export interface PortByCapability {
   'image-edit': ImageEditPort;
   'vision-scoring': VisionScoringPort;
   embedding: EmbeddingPort;
+  'speech-synthesis': SpeechSynthesisPort;
 }
 
 /** The method each capability is served by. The registration check reads this. */
@@ -58,6 +60,7 @@ export const CAPABILITY_METHOD = {
   'image-edit': 'editImage',
   'vision-scoring': 'score',
   embedding: 'embed',
+  'speech-synthesis': 'synthesizeSpeech',
 } as const satisfies Record<Capability, string>;
 
 export type CapabilityMethod = (typeof CAPABILITY_METHOD)[Capability];

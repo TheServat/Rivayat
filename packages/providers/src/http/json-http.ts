@@ -97,6 +97,25 @@ export class JsonHttpClient {
     return this.#send(path, 'POST', form, options, 'json');
   }
 
+  /**
+   * A JSON request whose *response* is binary.
+   *
+   * The shape every speech engine uses: a JSON body describing the utterance, an audio
+   * stream back. Separate from `postJson` rather than a flag on it because the return
+   * type differs, and separate from `getBytes` because the request has a body.
+   */
+  async postBytes(
+    path: string,
+    body: unknown,
+    options: RequestOptions = {},
+  ): Promise<Result<{ bytes: Uint8Array; contentType: string }, AppError>> {
+    const outcome = await this.#send(path, 'POST', body, options, 'bytes');
+    if (outcome.ok) {
+      return ok(outcome.value as { bytes: Uint8Array; contentType: string });
+    }
+    return outcome;
+  }
+
   /** For `/view`-style endpoints that return image bytes rather than JSON. */
   async getBytes(
     path: string,

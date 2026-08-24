@@ -35,6 +35,8 @@ export {
   slugify,
 } from './support/format';
 
+export * from './audio/index';
+
 export type {
   StageBackends,
   StageCallSpec,

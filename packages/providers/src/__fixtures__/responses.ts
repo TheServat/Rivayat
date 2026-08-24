@@ -366,3 +366,59 @@ export const comfy = {
 
   uploaded: { name: 'rivayat-base.png', subfolder: '', type: 'input' } as Record<string, unknown>,
 } as const;
+
+// -- voice engines -----------------------------------------------------------
+
+/**
+ * A minimal but genuinely well-formed WAV.
+ *
+ * Real RIFF structure with a real `fmt ` chunk, because the speech adapters measure a
+ * take's length from this header and a fixture that only *looked* like audio would let
+ * a broken measurement pass. `sampleCount` moves so two fixtures hash differently.
+ */
+export function wavBytes(sampleCount = 240): Uint8Array {
+  const dataBytes = sampleCount * 2;
+  const buffer = new Uint8Array(44 + dataBytes);
+  const view = new DataView(buffer.buffer);
+  const ascii = (offset: number, text: string): void => {
+    for (let index = 0; index < text.length; index += 1) {
+      buffer[offset + index] = text.charCodeAt(index);
+    }
+  };
+  ascii(0, 'RIFF');
+  view.setUint32(4, 36 + dataBytes, true);
+  ascii(8, 'WAVE');
+  ascii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, 24_000, true); // 24 kHz, what both local engines emit
+  view.setUint32(28, 48_000, true); // byte rate
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  ascii(36, 'data');
+  view.setUint32(40, dataBytes, true);
+  return buffer;
+}
+
+/** `POST /v1/text-to-speech/{voice_id}/with-timestamps`, per the published 200 response. */
+export const elevenlabs = {
+  speech(text: string): Record<string, unknown> {
+    const characters = [...text];
+    // 60 ms per character: arbitrary, and the point is only that the arrays agree.
+    const starts = characters.map((_, index) => index * 0.06);
+    return {
+      audio_base64: Buffer.from(wavBytes()).toString('base64'),
+      alignment: {
+        characters,
+        character_start_times_seconds: starts,
+        character_end_times_seconds: starts.map((start) => start + 0.06),
+      },
+      normalized_alignment: {
+        characters,
+        character_start_times_seconds: starts,
+        character_end_times_seconds: starts.map((start) => start + 0.06),
+      },
+    };
+  },
+};

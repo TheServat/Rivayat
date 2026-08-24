@@ -31,10 +31,12 @@ import { isErr, isOk } from '@rv/shared-kernel';
 import { FetchStub, type StubResponse } from '../__fixtures__/fetch-stub';
 import {
   comfy,
+  elevenlabs as elevenlabsFixture,
   gemini as geminiFixture,
   ollama as ollamaFixture,
   openrouter as openrouterFixture,
   pngBytes,
+  wavBytes,
 } from '../__fixtures__/responses';
 import { fixedClock } from '../__fixtures__/support';
 import { readWorkflow } from '../adapters/comfyui/__fixtures__/workflows';
@@ -43,13 +45,55 @@ import {
   COMFY_OPTIONAL_WORKFLOW_FILES,
   COMFY_WORKFLOW_FILES,
 } from '../adapters/comfyui/load-workflows';
+import { ChatterboxAdapter } from '../adapters/chatterbox/chatterbox-adapter';
+import { ElevenLabsAdapter } from '../adapters/elevenlabs/elevenlabs-adapter';
 import { GeminiAdapter } from '../adapters/gemini/gemini-adapter';
+import { HiggsAdapter } from '../adapters/higgs/higgs-adapter';
 import { OllamaAdapter } from '../adapters/ollama/ollama-adapter';
 import { OpenRouterAdapter } from '../adapters/openrouter/openrouter-adapter';
 import { CAPABILITY_METHOD, CapabilityMatrix } from '../ports/capability-matrix';
 import { declaresCapability, type ProviderAdapter } from '../ports/provider-adapter';
 import { type ImageGenerationPort, projectedNanoUsd } from '../ports/image-generation';
 import { supportsPartsSheet } from '../ports/parts-sheet';
+import {
+  type SpeechRequest,
+  type SpeechSynthesisPort,
+  projectedSpeechNanoUsd,
+} from '../ports/speech-synthesis';
+
+const SPEAKER_ID = 'ent_' + '0'.repeat(24) + 'A1';
+
+/**
+ * One line, cast and directed, for the three voice adapters to be measured on.
+ *
+ * English rather than Persian on purpose: `ChatterboxAdapter` refuses Persian on its
+ * stock weights, and a shared suite whose happy path one adapter legitimately refuses
+ * would be testing the refusal instead of the contract. That refusal has its own test,
+ * where it is the subject rather than an obstacle.
+ */
+const SPOKEN_LINE: SpeechRequest = {
+  text: 'She lights the lamp.',
+  voice: {
+    role: 'character',
+    performedBy: 'synthetic',
+    speakerRef: SPEAKER_ID,
+    label: 'Mahtab',
+    language: 'en',
+    binding: { presetId: 'mahtab', exemplar: null },
+    pitchBias: 0,
+    tempoBias: 0,
+    expressiveness: 0.5,
+    rationale: 'clipped, formal, goes quiet before she goes hard',
+  },
+  direction: {
+    emotion: 'bitterness',
+    intensity: 0.6,
+    pace: 'measured',
+    volume: 'normal',
+    stance: 'plain',
+  },
+  language: 'en',
+};
 
 const workflows = {
   txt2img: readWorkflow(COMFY_WORKFLOW_FILES.txt2img),
@@ -157,6 +201,42 @@ const CASES: readonly Case[] = [
         prompt: 'a brass pocket watch',
         seed: 1,
       }),
+    unsupported: 'text-generation',
+    exposesRetryAfter: true,
+  },
+  {
+    name: 'HiggsAdapter',
+    route: '/v1/audio/speech',
+    happy: (stub) => stub.on('/v1/audio/speech', { bytes: wavBytes() }),
+    build: (stub) => new HiggsAdapter({ fetch: stub.fetch, clock: fixedClock() }),
+    invoke: async (adapter) => (adapter as unknown as HiggsAdapter).synthesizeSpeech(SPOKEN_LINE),
+    unsupported: 'image-generation',
+    exposesRetryAfter: true,
+  },
+  {
+    name: 'ChatterboxAdapter',
+    route: '/tts',
+    happy: (stub) => stub.on('/tts', { bytes: wavBytes() }),
+    build: (stub) => new ChatterboxAdapter({ fetch: stub.fetch, clock: fixedClock() }),
+    invoke: async (adapter) =>
+      (adapter as unknown as ChatterboxAdapter).synthesizeSpeech(SPOKEN_LINE),
+    unsupported: 'text-generation',
+    exposesRetryAfter: true,
+  },
+  {
+    name: 'ElevenLabsAdapter',
+    route: '/with-timestamps',
+    happy: (stub) =>
+      stub.on('/with-timestamps', { json: elevenlabsFixture.speech('She lights the lamp.') }),
+    build: (stub) =>
+      new ElevenLabsAdapter({
+        apiKey: 'xi-test',
+        voiceId: 'default-voice',
+        fetch: stub.fetch,
+        clock: fixedClock(),
+      }),
+    invoke: async (adapter) =>
+      (adapter as unknown as ElevenLabsAdapter).synthesizeSpeech(SPOKEN_LINE),
     unsupported: 'text-generation',
     exposesRetryAfter: true,
   },
@@ -366,6 +446,13 @@ async function invokeWithSignal(
         seed: 1,
         signal,
       });
+    case 'HiggsAdapter':
+    case 'ChatterboxAdapter':
+    case 'ElevenLabsAdapter':
+      return (adapter as unknown as SpeechSynthesisPort).synthesizeSpeech({
+        ...SPOKEN_LINE,
+        signal,
+      });
     default:
       return (
         adapter as unknown as {
@@ -426,6 +513,83 @@ describe.each(CASES)('provider contract, unmatrixed declarations: $name', (testC
     expect(stub.requests).toHaveLength(0);
   });
 
+  it('quotes a speech call before making it, or does not claim to speak', () => {
+    const adapter = build();
+    if (!declaresCapability(adapter, 'speech-synthesis')) {
+      expect((adapter as Partial<SpeechSynthesisPort>).quoteSpeech).toBeUndefined();
+      expect((adapter as Partial<SpeechSynthesisPort>).speech).toBeUndefined();
+      return;
+    }
+
+    const port = adapter as unknown as SpeechSynthesisPort;
+    const quote = port.quoteSpeech({ text: SPOKEN_LINE.text, direction: SPOKEN_LINE.direction });
+
+    expect(['free', 'estimated', 'unpriced']).toContain(quote.kind);
+    expect(quote.modelRef).toBe(adapter.modelRef);
+    // At least the line: an adapter that adds tags and then quotes the raw text would
+    // under-bill every expressive line in the series, in one direction only.
+    expect(quote.characters).toBeGreaterThanOrEqual(SPOKEN_LINE.text.length);
+
+    const projected = projectedSpeechNanoUsd(quote);
+    if (quote.kind === 'unpriced') expect(projected).toBeNull();
+    else expect(projected).toBeGreaterThanOrEqual(0);
+  });
+
+  it('declares what it can do with a voice, and the declaration is internally consistent', () => {
+    const adapter = build();
+    if (!declaresCapability(adapter, 'speech-synthesis')) return;
+
+    const { speech } = adapter as unknown as SpeechSynthesisPort;
+    expect(['named-tags', 'voice-settings', 'scalar', 'none']).toContain(speech.emotionControl);
+    // An engine that neither clones nor selects can produce a voice but never a *cast*:
+    // every character would arrive in the same one, and nothing would report it.
+    expect(speech.clonesFromExemplar || speech.selectsPresetVoice).toBe(true);
+  });
+
+  it('quotes speech purely: the same request, the same answer, and no request sent', () => {
+    const stub = new FetchStub();
+    if (testCase.stubsGlobalFetch === true) vi.stubGlobal('fetch', stub.fetch);
+    const adapter = testCase.build(stub);
+    if (!declaresCapability(adapter, 'speech-synthesis')) return;
+
+    const port = adapter as unknown as SpeechSynthesisPort;
+    const request = { text: SPOKEN_LINE.text, direction: SPOKEN_LINE.direction };
+    expect(port.quoteSpeech(request)).toEqual(port.quoteSpeech(request));
+    expect(stub.requests).toHaveLength(0);
+  });
+
+  it('accounts for every part of the direction, expressed or not', async () => {
+    const stub = new FetchStub();
+    testCase.happy(stub);
+    if (testCase.stubsGlobalFetch === true) vi.stubGlobal('fetch', stub.fetch);
+    const adapter = testCase.build(stub);
+    if (!declaresCapability(adapter, 'speech-synthesis')) return;
+
+    const outcome = await (adapter as unknown as SpeechSynthesisPort).synthesizeSpeech({
+      ...SPOKEN_LINE,
+      direction: { ...SPOKEN_LINE.direction, volume: 'raised', stance: 'ironic' },
+    });
+
+    expect(isOk(outcome)).toBe(true);
+    if (!isOk(outcome)) return;
+    const { rendered } = outcome.value;
+    const accounted = new Set<string>([
+      ...rendered.approximated.map((gap) => gap.aspect),
+      ...rendered.dropped.map((gap) => gap.aspect),
+    ]);
+    // `raised` and `ironic` must each appear somewhere - applied, approximated or
+    // dropped. An adapter that expressed neither and reported neither is the silent
+    // failure this member exists to make impossible.
+    expect(
+      accounted.has('volume') || rendered.applied.some((e) => /volume|shout|raise/u.test(e)),
+    ).toBe(true);
+    expect(accounted.has('stance') || rendered.applied.some((e) => e.includes('sarcas'))).toBe(
+      true,
+    );
+    // And the bill is what was really sent, never the raw line.
+    expect(outcome.value.usage.speech?.characters).toBe(rendered.text.length);
+  });
+
   it('either serves parts sheets completely or is invisible to the guard', () => {
     const adapter = build();
     const method = (adapter as unknown as Record<string, unknown>).generatePartsSheet;
@@ -446,8 +610,11 @@ describe.each(CASES)('provider contract, unmatrixed declarations: $name', (testC
 describe('the contract suite itself', () => {
   it('covers every adapter this package ships', () => {
     expect(CASES.map((testCase) => testCase.name).sort()).toEqual([
+      'ChatterboxAdapter',
       'ComfyUiAdapter',
+      'ElevenLabsAdapter',
       'GeminiAdapter',
+      'HiggsAdapter',
       'OllamaAdapter',
       'OpenRouterAdapter',
     ]);

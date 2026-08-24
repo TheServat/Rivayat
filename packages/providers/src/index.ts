@@ -11,6 +11,8 @@
 export type {
   ImagePayload,
   ImageArtifact,
+  AudioPayload,
+  AudioArtifact,
   ProviderUsage,
   ProviderCallResult,
   ProviderAdapter,
@@ -34,16 +36,28 @@ export type {
   EmbeddingRequest,
   EmbeddingResult,
   EmbeddingPort,
+  SpeechRequest,
+  SpeechCostRequest,
+  SpeechCostQuote,
+  DirectionAspect,
+  DirectionGap,
+  RenderedDirection,
+  SpeechAlignment,
+  SpeechResult,
+  SpeechSynthesisPort,
   PortByCapability,
   CapabilityMethod,
 } from './ports';
 export {
   toImageArtifact,
+  toAudioArtifact,
   usage,
   NO_TOKENS,
   NO_IMAGES,
   declaresCapability,
   projectedNanoUsd,
+  projectedSpeechNanoUsd,
+  speechRefusal,
   supportsPartsSheet,
   VisionScoreSheet,
   buildRubricPrompt,
@@ -110,6 +124,50 @@ export {
   loadComfyWorkflows,
 } from './adapters/comfyui/load-workflows';
 
+// -- voice engines ----------------------------------------------------------
+export type { HiggsAdapterOptions, HiggsDialect } from './adapters/higgs/higgs-adapter';
+export {
+  HiggsAdapter,
+  HIGGS_CAPABILITIES,
+  HIGGS_DEFAULT_BASE_URL,
+  HIGGS_DEFAULT_MODEL,
+} from './adapters/higgs/higgs-adapter';
+export type {
+  HiggsEmotion,
+  HiggsStyle,
+  HiggsProsody,
+  HiggsRendering,
+  HiggsVoiceBias,
+} from './adapters/higgs/tags';
+export {
+  HIGGS_EMOTIONS,
+  HIGGS_STYLES,
+  HIGGS_PROSODY,
+  renderHiggsInput,
+} from './adapters/higgs/tags';
+
+export type { ChatterboxAdapterOptions } from './adapters/chatterbox/chatterbox-adapter';
+export {
+  ChatterboxAdapter,
+  CHATTERBOX_CAPABILITIES,
+  CHATTERBOX_DEFAULT_BASE_URL,
+  CHATTERBOX_DEFAULT_MODEL,
+  CHATTERBOX_NEUTRAL,
+  CHATTERBOX_DRAMATIC,
+  cfgWeightFor,
+} from './adapters/chatterbox/chatterbox-adapter';
+
+export type { ElevenLabsAdapterOptions } from './adapters/elevenlabs/elevenlabs-adapter';
+export {
+  ElevenLabsAdapter,
+  ELEVENLABS_CAPABILITIES,
+  ELEVENLABS_DEFAULT_BASE_URL,
+  ELEVENLABS_DEFAULT_MODEL,
+} from './adapters/elevenlabs/elevenlabs-adapter';
+
+export type { WavFacts } from './adapters/wav';
+export { readWavFacts, wavDurationMs } from './adapters/wav';
+
 // ── routing ─────────────────────────────────────────────────────────────────
 export type {
   RouteRequest,
@@ -135,6 +193,7 @@ export {
   priceCall,
   quoteImageCall,
 } from './cost/pricing';
+export { speechPricingFor, priceSpeechCall, quoteSpeechCall } from './cost/speech-pricing';
 export type { RecordCallInput, CostMeterDeps, SpendReader } from './cost/cost-meter';
 export { CostMeter } from './cost/cost-meter';
 export type { BudgetCheck, BudgetGuardDeps } from './cost/budget-guard';

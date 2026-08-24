@@ -384,3 +384,90 @@ describe('the keyed-sheet alpha threshold', () => {
     }
   });
 });
+
+describe('structural checks on the parts it produced', () => {
+  /**
+   * The same three blobs, with their corners keyed away.
+   *
+   * Worth saying out loud: `threeBlobs()` - the fixture most of this file is written
+   * against - is three axis-aligned rectangles, and structurally that is exactly what an
+   * unkeyed photograph looks like. Real artwork almost never has a rectangular
+   * silhouette, so the clean case has to be built rather than borrowed.
+   */
+  async function keyedBlobs(): Promise<{ width: number; height: number; data: Uint8Array }> {
+    const image = await threeBlobs();
+    const data = new Uint8Array(image.data);
+    for (const blob of [
+      { x: 10, y: 10 },
+      { x: 78, y: 10 },
+      { x: 10, y: 78 },
+    ]) {
+      for (let dy = 0; dy < 8; dy += 1) {
+        for (let dx = 0; dx + dy < 8; dx += 1) {
+          for (const [cx, cy] of [
+            [blob.x + dx, blob.y + dy],
+            [blob.x + 29 - dx, blob.y + dy],
+            [blob.x + dx, blob.y + 29 - dy],
+            [blob.x + 29 - dx, blob.y + 29 - dy],
+          ] as const) {
+            data[(cy * image.width + cx) * 4 + 3] = 0;
+          }
+        }
+      }
+    }
+    return { width: image.width, height: image.height, data };
+  }
+
+  it('reports the structure alongside the assignment, always', async () => {
+    const output = unwrap(
+      await harness().execute({ spec: threeBlobSpec(), image: await keyedBlobs() }),
+    );
+    expect(output.structure.inspectedParts).toBe(3);
+    expect(output.structure.errorCount).toBe(0);
+  });
+
+  it('refuses a split whose parts were never cut out, under strict', async () => {
+    const failed = await harness().execute({
+      spec: threeBlobSpec(),
+      image: await threeBlobs(),
+      strict: true,
+    });
+
+    expect(isErr(failed)).toBe(true);
+    if (!isErr(failed)) return;
+    expect(failed.error.message).toBe('parts-structurally-invalid');
+    const context = failed.error.context as { findings: { code: string }[] };
+    expect(context.findings.map((finding) => finding.code)).toContain('part.corners-opaque');
+  });
+
+  it('lets the same split through when not strict, so a fallback chain can react', async () => {
+    const output = unwrap(
+      await harness().execute({ spec: threeBlobSpec(), image: await threeBlobs() }),
+    );
+    expect(output.parts).toHaveLength(3);
+    expect(output.structure.errorCount).toBeGreaterThan(0);
+  });
+
+  it('honours structural bounds the caller widens, rather than hard-coding a policy', async () => {
+    const output = unwrap(
+      await harness().execute({
+        spec: threeBlobSpec(),
+        image: await threeBlobs(),
+        strict: true,
+        structureOptions: { maxOpaqueCorners: 4, maxAlphaCoverage: 1 },
+      }),
+    );
+    expect(output.structure.errorCount).toBe(0);
+  });
+
+  it('checks a single-layer fallback too, which is where a whole canvas gets through', async () => {
+    const output = unwrap(
+      await harness().execute({
+        spec: threeBlobSpec(),
+        image: await keyedBlobs(),
+        decomposition: 'single-layer',
+      }),
+    );
+    expect(output.structure.inspectedParts).toBe(1);
+  });
+});

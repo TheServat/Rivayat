@@ -7,7 +7,7 @@
  * narrow-port rule; `pnpm arch:check` turns it into a build failure.
  */
 
-import type { ImageUsage, ModelRef, Size, TokenUsage } from '@rv/contracts';
+import type { ImageUsage, ModelRef, Size, SpeechUsage, TokenUsage } from '@rv/contracts';
 import { type Sha256, sha256 } from '@rv/shared-kernel';
 
 /** Raw bytes with their media type. The only image shape that crosses a port. */
@@ -46,6 +46,47 @@ export function toImageArtifact(
   };
 }
 
+/** Raw audio bytes with their media type. The only audio shape that crosses a port. */
+export interface AudioPayload {
+  /** e.g. `audio/wav`. Engines disagree about defaults, so it is never inferred. */
+  readonly mimeType: string;
+  readonly data: Uint8Array;
+}
+
+/**
+ * Audio a provider produced, addressed by content.
+ *
+ * The hash is what makes a non-deterministic engine safe to depend on. ADR-0008 §1 says
+ * providers author and the artefact replays; for speech that is literal - the engine is
+ * free to produce something slightly different every time, and the moment it has, the
+ * bytes are addressed and a second identical request is a cache hit that spends nothing.
+ *
+ * `durationMs` is `null` when nobody has measured it. That is deliberately awkward: a
+ * cue whose length is guessed mistimes every cue after it on the track, so the type
+ * refuses to supply a plausible number. WAV can be measured from its header for free
+ * (see `wavDurationMs`); MP3 cannot, and an engine that returns alignment gives the
+ * answer another way.
+ */
+export interface AudioArtifact extends AudioPayload {
+  readonly sha256: Sha256;
+  readonly durationMs: number | null;
+  readonly sampleRateHz: number | null;
+}
+
+/** Builds an `AudioArtifact`, hashing the bytes exactly once. */
+export function toAudioArtifact(
+  payload: AudioPayload,
+  extras: { readonly durationMs?: number | null; readonly sampleRateHz?: number | null } = {},
+): AudioArtifact {
+  return {
+    mimeType: payload.mimeType,
+    data: payload.data,
+    sha256: sha256(payload.data),
+    durationMs: extras.durationMs ?? null,
+    sampleRateHz: extras.sampleRateHz ?? null,
+  };
+}
+
 /**
  * What one call consumed, in the units the `CostMeter` prices.
  *
@@ -66,6 +107,14 @@ export interface ProviderUsage {
    * to be set. Absent means "the provider did not say", and the meter estimates.
    */
   readonly imageOutputTokens?: number;
+  /**
+   * Characters sent and audio produced, for a speech call.
+   *
+   * Optional in the same way `imageOutputTokens` is: absent means this was not a speech
+   * call, and the meter must not invent a zero-character charge for every text call in
+   * the ledger.
+   */
+  readonly speech?: SpeechUsage;
 }
 
 /** Fields every port result carries, so the meter never has to special-case a port. */

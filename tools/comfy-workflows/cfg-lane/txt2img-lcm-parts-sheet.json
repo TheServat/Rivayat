@@ -1,0 +1,104 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Base checkpoint"
+    },
+    "inputs": {
+      "ckpt_name": "{{checkpoint}}"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "LCM LoRA"
+    },
+    "inputs": {
+      "model": ["1", 0],
+      "clip": ["1", 1],
+      "lora_name": "{{lora}}",
+      "strength_model": "{{lora_strength}}",
+      "strength_clip": "{{lora_strength}}"
+    }
+  },
+  "3": {
+    "class_type": "ModelSamplingDiscrete",
+    "_meta": {
+      "title": "eps sigma schedule - the LCM distillation is switched off here (see cfg-lane/README.md)"
+    },
+    "inputs": {
+      "model": ["2", 0],
+      "sampling": "eps",
+      "zsnr": false
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive - single isolated subject (see cfg-lane/README.md; this is NOT the exploded-view scaffold)"
+    },
+    "inputs": {
+      "clip": ["2", 1],
+      "text": "{{prompt}}, {{style}}, one single subject alone and complete, centred with a generous margin, on a flat {{background}} field, no scene, no ground, no cast shadow"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative - caller negative + flat-field scaffold"
+    },
+    "inputs": {
+      "clip": ["2", 1],
+      "text": "{{negative}}, scenery, environment, landscape, interior, busy background, gradient background, vignette, drop shadow, cast shadow, ambient occlusion, depth of field, motion blur, close-up portrait, face, cropped, cut off at frame edge, text, label, caption, letters, numbers, watermark, signature, frame, border"
+    }
+  },
+  "6": {
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Sheet canvas — aspect should follow grid_cols:grid_rows"
+    },
+    "inputs": {
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "batch_size": "{{batch_size}}"
+    }
+  },
+  "7": {
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "LCM sampler"
+    },
+    "inputs": {
+      "model": ["3", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["6", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": 1
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Decode"
+    },
+    "inputs": {
+      "samples": ["7", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save"
+    },
+    "inputs": {
+      "images": ["8", 0],
+      "filename_prefix": "{{filename_prefix}}"
+    }
+  }
+}

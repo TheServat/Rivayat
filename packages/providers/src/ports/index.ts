@@ -6,8 +6,15 @@
  * job would be one more thing to keep in step.
  */
 
-export type { ImagePayload, ImageArtifact, ProviderUsage, ProviderCallResult } from './common';
-export { toImageArtifact, usage, NO_TOKENS, NO_IMAGES } from './common';
+export type {
+  ImagePayload,
+  ImageArtifact,
+  AudioPayload,
+  AudioArtifact,
+  ProviderUsage,
+  ProviderCallResult,
+} from './common';
+export { toImageArtifact, toAudioArtifact, usage, NO_TOKENS, NO_IMAGES } from './common';
 
 export type { ProviderAdapter } from './provider-adapter';
 export { declaresCapability } from './provider-adapter';
@@ -42,6 +49,19 @@ export type {
 export { VisionScoreSheet, buildRubricPrompt, parseScoreSheet } from './vision-scoring';
 
 export type { EmbeddingRequest, EmbeddingResult, EmbeddingPort } from './embedding';
+
+export type {
+  SpeechRequest,
+  SpeechCostRequest,
+  SpeechCostQuote,
+  DirectionAspect,
+  DirectionGap,
+  RenderedDirection,
+  SpeechAlignment,
+  SpeechResult,
+  SpeechSynthesisPort,
+} from './speech-synthesis';
+export { projectedSpeechNanoUsd, speechRefusal } from './speech-synthesis';
 
 export type { PortByCapability, CapabilityMethod } from './capability-matrix';
 export { CapabilityMatrix, CAPABILITY_METHOD } from './capability-matrix';

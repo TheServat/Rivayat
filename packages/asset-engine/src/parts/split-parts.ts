@@ -23,6 +23,12 @@ import {
   extractComponent,
   findComponents,
 } from './connected-components';
+import {
+  type MeasuredPart,
+  type PartStructureOptions,
+  type PartStructureReport,
+  checkPartStructure,
+} from './part-structure';
 
 export interface SplitPartsDeps {
   readonly raster: RasterPort;
@@ -41,8 +47,10 @@ export interface SplitPartsInput {
    */
   readonly decomposition?: 'parts-sheet' | 'segmented' | 'single-layer';
   readonly componentOptions?: ComponentOptions;
-  /** Turns an incomplete assignment into a failure. Defaults to false. */
+  /** Turns an incomplete assignment, or a structural defect, into a failure. */
   readonly strict?: boolean;
+  /** Overrides for the structural bounds; the defaults are documented where they live. */
+  readonly structureOptions?: PartStructureOptions;
 }
 
 export interface SplitPartsOutput {
@@ -51,6 +59,15 @@ export interface SplitPartsOutput {
   /** Components below the size floor. Speckle, usually - but reported, never hidden. */
   readonly discardedComponents: number;
   readonly decomposition: 'parts-sheet' | 'segmented' | 'single-layer';
+  /**
+   * What the parts actually look like, measured rather than assumed.
+   *
+   * The assignment report says which plan each blob was matched to; this says whether the
+   * blobs are parts at all. They are different questions, and a run can pass the first
+   * while failing the second - `prop/street-lamp/terrace` recorded `4/4 parts` for four
+   * photographs. Always produced; `strict` decides whether an error in it is fatal.
+   */
+  readonly structure: PartStructureReport;
 }
 
 export class SplitPartsUseCase {
@@ -89,17 +106,65 @@ export class SplitPartsUseCase {
       );
     }
 
-    const parts: Part[] = [];
+    const measured: MeasuredPart[] = [];
     for (const assignment of report.assignments) {
       const cut = extractComponent(input.image, field, assignment.component);
       const stored = await this.#store(cut);
       if (isErr(stored)) return stored;
-      parts.push(
-        this.#toPart(input, assignment.plan.name, assignment.component, cut, stored.value),
-      );
+      measured.push({
+        part: this.#toPart(input, assignment.plan.name, assignment.component, cut, stored.value),
+        image: cut,
+      });
     }
 
-    return ok({ parts, report, discardedComponents: field.discarded, decomposition });
+    const structure = checkPartStructure({
+      parts: measured,
+      canvas: { width: input.image.width, height: input.image.height },
+      expectedComponents: input.spec.parts.length,
+      foundComponents: field.components.length,
+      ...(input.structureOptions === undefined ? {} : { options: input.structureOptions }),
+    });
+    const refused = this.#refuse(input, structure);
+    if (refused !== undefined) return refused;
+
+    return ok({
+      parts: measured.map((entry) => entry.part),
+      report,
+      discardedComponents: field.discarded,
+      decomposition,
+      structure,
+    });
+  }
+
+  /**
+   * Turns structural errors into a failure, but only under `strict`.
+   *
+   * The same bargain the count mismatch already strikes: the report is always produced
+   * because the fallback chain needs it to decide what to try next, and `strict` is what
+   * says an unusable split must not flow onward. Silently is the only way this class of
+   * defect has ever shipped.
+   */
+  #refuse(
+    input: SplitPartsInput,
+    structure: PartStructureReport,
+  ): Result<SplitPartsOutput, AppError> | undefined {
+    if (input.strict !== true || structure.errorCount === 0) return undefined;
+    return err(
+      new ValidationError({
+        message: 'parts-structurally-invalid',
+        context: {
+          semanticKey: input.spec.semanticKey,
+          findings: structure.findings
+            .filter((finding) => finding.severity === 'error')
+            .map((finding) => ({
+              code: finding.code,
+              part: finding.partName ?? null,
+              measured: finding.measured,
+              expected: finding.expected,
+            })),
+        },
+      }),
+    );
   }
 
   /** One part, the whole canvas, trimmed to its alpha. Still mesh-deformable. */
@@ -139,8 +204,18 @@ export class SplitPartsUseCase {
       fill: alphaCoverage(cropped.value),
     };
 
+    const part = this.#toPart(input, target.name, pseudo, cropped.value, stored.value);
+    const structure = checkPartStructure({
+      parts: [{ part, image: cropped.value }],
+      canvas: { width: input.image.width, height: input.image.height },
+      ...(input.structureOptions === undefined ? {} : { options: input.structureOptions }),
+    });
+    const refused = this.#refuse(input, structure);
+    if (refused !== undefined) return refused;
+
     return ok({
-      parts: [this.#toPart(input, target.name, pseudo, cropped.value, stored.value)],
+      parts: [part],
+      structure,
       report: {
         assignments: [{ plan: target, component: pseudo, cost: 0 }],
         unmatched: [],

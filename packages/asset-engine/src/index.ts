@@ -126,6 +126,23 @@ export type {
 } from './parts/assign-components';
 export { SplitPartsUseCase } from './parts/split-parts';
 export type { SplitPartsDeps, SplitPartsInput, SplitPartsOutput } from './parts/split-parts';
+export {
+  PART_STRUCTURE_CODES,
+  PART_STRUCTURE_SEVERITIES,
+  checkPartStructure,
+  partSignature,
+  signatureDistance,
+} from './parts/part-structure';
+export type {
+  MeasuredPart,
+  PartStructureCode,
+  PartStructureFinding,
+  PartStructureInput,
+  PartStructureOptions,
+  PartStructureReport,
+  PartStructureSeverity,
+  PartStructureUnit,
+} from './parts/part-structure';
 
 // ── rigging ─────────────────────────────────────────────────────────────────
 export {

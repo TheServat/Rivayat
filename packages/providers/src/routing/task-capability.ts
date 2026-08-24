@@ -26,6 +26,7 @@ export const TASK_CAPABILITY = {
   'image-edit': 'image-edit',
   'vision-score': 'vision-scoring',
   embed: 'embedding',
+  'speech-line': 'speech-synthesis',
 } as const satisfies Record<TaskKind, Capability>;
 
 export function capabilityForTask(task: TaskKind): Capability {

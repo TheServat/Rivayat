@@ -243,3 +243,60 @@ describe('CostMeter.price', () => {
     expect(meter.records()).toHaveLength(0);
   });
 });
+
+/**
+ * Speech reaches the ledger, and a free voice still leaves a row.
+ *
+ * Added with the audio layer. The failure being guarded against is the quiet one: before
+ * `ProviderUsage.speech` existed, a paid ElevenLabs call would have been priced through
+ * `KNOWN_MODELS`, found nothing, and been written into the ledger at $0.00 - a real
+ * charge, invisible, with a receipt saying it was free.
+ */
+describe('CostMeter prices a voice call', () => {
+  it('charges an ElevenLabs line at the catalogue character rate', () => {
+    const meter = new CostMeter({ clock: fixedClock(), projectId: testProjectId() });
+    const cost = meter.price('elevenlabs', 'eleven_v3', {
+      tokens: { input: 0, output: 0, cached: 0, reasoning: 0 },
+      images: { count: 0, resolution: null },
+      latencyMs: 900,
+      speech: { characters: 1000, audioMs: 4200 },
+    });
+    // $0.10 per 1K characters.
+    expect(cost).toBe(100_000_000);
+  });
+
+  it('charges nothing for a local voice, and still writes the row', () => {
+    const meter = new CostMeter({ clock: fixedClock(), projectId: testProjectId() });
+    const record = meter.record({
+      runId: testRunId(),
+      stage: 'render',
+      provider: 'chatterbox',
+      model: 'ResembleAI/chatterbox-multilingual',
+      task: 'speech-line',
+      tier: 'final',
+      usage: {
+        tokens: { input: 0, output: 0, cached: 0, reasoning: 0 },
+        images: { count: 0, resolution: null },
+        latencyMs: 4600,
+        speech: { characters: 68, audioMs: 3160 },
+      },
+      outcome: 'success',
+    });
+
+    expect(record.costNanoUsd).toBe(0);
+    expect(record.task).toBe('speech-line');
+    expect(meter.ledger().summary.total.calls).toBe(1);
+  });
+
+  it('leaves a text call priced exactly as it was before speech existed', () => {
+    const meter = new CostMeter({ clock: fixedClock(), projectId: testProjectId() });
+    const consumed = {
+      tokens: { input: 1000, output: 500, cached: 0, reasoning: 0 },
+      images: { count: 0, resolution: null },
+      latencyMs: 100,
+    };
+    expect(meter.price('openrouter', 'google/gemma-4-31b-it:free', consumed)).toBe(
+      meter.price('openrouter', 'google/gemma-4-31b-it:free', { ...consumed }),
+    );
+  });
+});

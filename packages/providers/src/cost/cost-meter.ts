@@ -24,7 +24,7 @@ import type {
   TaskKind,
   UsageRecord,
 } from '@rv/contracts';
-import { Ids, type ModelDescriptor } from '@rv/contracts';
+import { Ids, type ModelDescriptor, type SpeechModelDescriptor } from '@rv/contracts';
 import {
   type Clock,
   type Instant,
@@ -38,6 +38,7 @@ import {
 
 import type { ProviderUsage } from '../ports/common';
 import { priceCall, pricingFor } from './pricing';
+import { priceSpeechCall, speechPricingFor } from './speech-pricing';
 
 /** Everything the meter needs that it cannot derive. */
 export interface RecordCallInput {
@@ -70,6 +71,15 @@ export interface CostMeterDeps {
   readonly ids?: Ids;
   /** Defaults to `KNOWN_MODELS`. */
   readonly catalogue?: readonly ModelDescriptor[];
+  /**
+   * Defaults to `KNOWN_SPEECH_MODELS`.
+   *
+   * A second catalogue rather than more rows in the first, because speech is billed per
+   * character and nothing else in the system is - see `audio/speech-model.ts` for the
+   * full argument. The meter consults it only when a call reports speech usage, so a
+   * text or image row is priced exactly as it was before.
+   */
+  readonly speechCatalogue?: readonly SpeechModelDescriptor[];
   readonly logger?: Logger;
 }
 
@@ -95,6 +105,7 @@ export class CostMeter implements SpendReader {
   readonly #projectId: ProjectId;
   readonly #ids: Ids;
   readonly #catalogue: readonly ModelDescriptor[] | undefined;
+  readonly #speechCatalogue: readonly SpeechModelDescriptor[] | undefined;
   readonly #logger: Logger;
   readonly #records: UsageRecord[] = [];
   /** Kept alongside the ISO timestamps so the per-day window is a numeric compare. */
@@ -105,6 +116,7 @@ export class CostMeter implements SpendReader {
     this.#projectId = deps.projectId;
     this.#ids = deps.ids ?? new Ids();
     this.#catalogue = deps.catalogue;
+    this.#speechCatalogue = deps.speechCatalogue;
     this.#logger = deps.logger ?? new NoopLogger();
   }
 
@@ -115,7 +127,17 @@ export class CostMeter implements SpendReader {
    * side effect of recording one.
    */
   price(provider: ProviderKind, model: string, consumed: ProviderUsage): NanoUsd {
-    return priceCall(pricingFor(provider, model, this.#catalogue), consumed);
+    const base = priceCall(pricingFor(provider, model, this.#catalogue), consumed);
+    if (consumed.speech === undefined) return base;
+
+    // Additive rather than exclusive. A call has never yet consumed both tokens and
+    // characters, but a model that returned narration *and* the text it narrated would,
+    // and a meter that priced only one of them would under-report by exactly the half
+    // nobody was watching.
+    return addUsd(
+      base,
+      priceSpeechCall(speechPricingFor(provider, model, this.#speechCatalogue), consumed.speech),
+    );
   }
 
   /** Writes one row and returns it. */
