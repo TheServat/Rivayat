@@ -37,6 +37,12 @@ export class CreateProjectUseCase {
       id: this.#ids.project(),
       name: request.name,
       description: request.description,
+      // Carried from the request rather than left to the schema's default. `locale`
+      // defaults to `fa` because the studio is Persian-first, and a default silently
+      // overriding what a caller sent is worse than not having one: an English project
+      // created through the API came back labelled Persian, and nothing in the response
+      // said the field had been ignored.
+      locale: request.locale,
       styleBibleId: null,
       budgetNanoUsd: request.budgetNanoUsd,
       createdAt: now,
