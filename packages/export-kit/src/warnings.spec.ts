@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { IrFeature, IrFeatureUse } from '@rv/contracts';
 
-import type { FeatureUse, IrFeature } from './features';
 import {
   type FormatCapabilities,
   UnsupportedFeaturesError,
@@ -8,7 +8,7 @@ import {
   lossyWarnings,
 } from './warnings';
 
-function use(entries: readonly (readonly [IrFeature, readonly string[]])[]): FeatureUse {
+function use(entries: readonly (readonly [IrFeature, readonly string[]])[]): IrFeatureUse {
   return new Map(entries);
 }
 

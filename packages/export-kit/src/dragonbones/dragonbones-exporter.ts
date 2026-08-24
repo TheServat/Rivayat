@@ -21,6 +21,12 @@
  *
  * What does not map is declared in {@link DRAGONBONES_CAPABILITIES}: shapes, text,
  * particles, the camera, the IR's independent x/y skew, and per-node tint.
+ *
+ * Positions are written in composition space, not raw scene space - see
+ * `../scene-space.ts`. Scene space is centre-origin and an armature is not, and the
+ * renderer is the implementation every projection agrees with. It only shows in a
+ * root-mapped bone, whose `translateFrame` deltas have nothing to be relative to; a bone
+ * under a mapped parent differences two positions that both moved by the same constant.
  */
 
 import { type AppError, type Result, ValidationError, at, err, isErr, ok } from '@rv/shared-kernel';
@@ -35,9 +41,10 @@ import type {
   Size,
   Transform2D,
 } from '@rv/contracts';
+import { type IrFeature, detectIrFeatures } from '@rv/contracts';
 import { type EvaluateOptions, evaluate, rotateVec } from '@rv/anim-engine';
 
-import { detectFeatures, type IrFeature } from '../features';
+import { transformInCompositionSpace } from '../scene-space';
 import type { DragonBonesOptions, ExportOptions } from '../options';
 import type { ImageEncoderPort } from '../pixels';
 import {
@@ -325,7 +332,7 @@ export class DragonBonesExporter implements Exporter {
       jsonArtifact(`${opts.value.name}_ske.json`, built.skeleton),
     ];
     const warnings: ExportWarning[] = [
-      ...diffFeatures(detectFeatures(input.ir), DRAGONBONES_CAPABILITIES),
+      ...diffFeatures(detectIrFeatures(input.ir), DRAGONBONES_CAPABILITIES),
     ];
 
     const texture = await this.#texturePage(input, opts.value, options);
@@ -708,9 +715,21 @@ function buildAnimation(
     if (node !== undefined) boneNode.set(bone.id, node.id);
   }
 
+  // Scene space is centre-origin and a DragonBones armature is not, so every world
+  // transform is moved into composition space before anything is differenced (see
+  // `../scene-space.ts`). Doing it here rather than at the subtraction below is what makes
+  // the property obvious: a bone whose parent bone also maps to a node is unaffected,
+  // because `decomposeLocal` subtracts two positions that have both moved by the same
+  // constant, while a **root-mapped** bone - which has nothing to be relative to - carries
+  // the offset through to its `translateFrame` deltas, exactly as the renderer places it.
   const snapshots = frames.map((frame) => {
     const snapshot = evaluate(ir, (frame * 1000) / ir.fps, evaluateOptions);
-    return new Map(snapshot.nodes.map((node) => [node.nodeId, node.worldTransform]));
+    return new Map(
+      snapshot.nodes.map((node) => [
+        node.nodeId,
+        transformInCompositionSpace(node.worldTransform, ir.sceneSpace),
+      ]),
+    );
   });
 
   const boneById = new Map(rig.bones.map((bone) => [bone.id, bone]));

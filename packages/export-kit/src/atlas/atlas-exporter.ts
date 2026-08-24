@@ -15,8 +15,8 @@
  */
 
 import { type AppError, type Result, ValidationError, err, isErr, ok } from '@rv/shared-kernel';
+import { type IrFeature, detectIrFeatures } from '@rv/contracts';
 
-import { detectFeatures, type IrFeature } from '../features';
 import type { ExportOptions } from '../options';
 import type { ImageEncoderPort } from '../pixels';
 import {
@@ -145,7 +145,7 @@ export class AtlasExporter implements Exporter {
 
     const artifacts = describePages(packed.value, opts.name, this.#encoder.mediaType);
 
-    const warnings = diffFeatures(detectFeatures(input.ir), ATLAS_CAPABILITIES);
+    const warnings = diffFeatures(detectIrFeatures(input.ir), ATLAS_CAPABILITIES);
     if (options.strict === true) {
       const lossy = lossyWarnings(warnings);
       if (lossy.length > 0) return err(new UnsupportedFeaturesError(this.id, lossy));

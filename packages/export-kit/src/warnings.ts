@@ -12,8 +12,7 @@
  */
 
 import { AppError, type ErrorKind } from '@rv/shared-kernel';
-
-import { describeFeature, type FeatureUse, type IrFeature } from './features';
+import { type IrFeature, type IrFeatureUse, describeIrFeature } from '@rv/contracts';
 
 /**
  * How much of a feature survived.
@@ -63,7 +62,7 @@ export interface FormatCapabilities {
  * direction.
  */
 export function diffFeatures(
-  present: FeatureUse,
+  present: IrFeatureUse,
   capabilities: FormatCapabilities,
 ): readonly ExportWarning[] {
   const warnings: ExportWarning[] = [];
@@ -77,7 +76,7 @@ export function diffFeatures(
         ? {
             feature,
             disposition: 'dropped',
-            detail: `${describeFeature(feature)} has no representation in this format and was not written`,
+            detail: `${describeIrFeature(feature)} has no representation in this format and was not written`,
             ids,
           }
         : { feature, disposition: note.disposition, detail: note.detail, ids },

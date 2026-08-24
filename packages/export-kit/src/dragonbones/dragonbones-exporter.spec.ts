@@ -161,8 +161,8 @@ describe('DragonBonesExporter', () => {
     const animation = readJson<DbSkeleton>(output, 'hierarchy_ske.json').armature[0]?.animation[0];
     const root = animation?.bone?.find((bone) => bone.name === 'rig-root');
 
-    // This rig's rest pose *is* the node's authored position, so the delta is always zero
-    // and nothing is written; rotation and scale still move and still are.
+    // This rig's rest pose is the node's position *in composition space*, so the delta is
+    // always zero and nothing is written; rotation and scale still move and still are.
     expect(root?.translateFrame).toBeUndefined();
     expect(root?.rotateFrame).toBeDefined();
     expect(root?.scaleFrame).toBeDefined();

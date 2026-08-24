@@ -1,7 +1,7 @@
 /**
  * Nothing leaves the IR unaccounted for.
  *
- * `IR_FEATURES` is the vocabulary two independent things use: `detectFeatures` says what a
+ * `IR_FEATURES` is the vocabulary two independent things use: `detectIrFeatures` says what a
  * document contains, and every exporter declares what it can carry. The failure mode is
  * quiet on both sides - a feature the detector never emits is a feature no format is ever
  * asked about, and a feature an exporter forgets to classify is a file with something
@@ -10,7 +10,7 @@
  * So this file asserts the closure rather than any one format's opinion:
  *
  *  1. There is a document that exercises **every** member of `IR_FEATURES`. Adding a
- *     feature without giving `detectFeatures` a way to see it fails here.
+ *     feature without giving `detectIrFeatures` a way to see it fails here.
  *  2. Every feature that document uses is, for every registered format, either declared
  *     exact or named in a warning with the ids that carry it. Never silently absent.
  *  3. No format declares a feature both exactly and approximately, which would make
@@ -18,9 +18,14 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { AnimationIR as AnimationIRSchema, type AnimationIR } from '@rv/contracts';
+import {
+  AnimationIR as AnimationIRSchema,
+  type AnimationIR,
+  IR_FEATURES,
+  type IrFeature,
+  detectIrFeatures,
+} from '@rv/contracts';
 
-import { IR_FEATURES, type IrFeature, detectFeatures } from './features';
 import { createDefaultRegistry } from './registry';
 import type { Exporter } from './port';
 import { testClock, testIds } from './__fixtures__/ids';
@@ -198,13 +203,13 @@ function allExporters(): readonly Exporter[] {
 
 describe('the feature vocabulary', () => {
   it('is fully exercised by one document, so no feature goes permanently unasked', () => {
-    const detected = detectFeatures(maximalIr());
+    const detected = detectIrFeatures(maximalIr());
     const missing = IR_FEATURES.filter((feature) => !detected.has(feature));
     expect(missing, `no fixture exercises: ${missing.join(', ')}`).toEqual([]);
   });
 
   it('names the ids that carry each feature, so a warning is actionable', () => {
-    for (const [feature, ids] of detectFeatures(maximalIr())) {
+    for (const [feature, ids] of detectIrFeatures(maximalIr())) {
       expect(ids.length, `${feature} was detected with no id attached`).toBeGreaterThan(0);
       for (const id of ids) expect(typeof id).toBe('string');
     }
@@ -212,7 +217,7 @@ describe('the feature vocabulary', () => {
 });
 
 describe('every registered format accounts for everything the document uses', () => {
-  const detected = detectFeatures(maximalIr());
+  const detected = detectIrFeatures(maximalIr());
   const present = [...detected.keys()];
 
   it.each(allExporters().map((exporter) => [exporter.id, exporter] as const))(

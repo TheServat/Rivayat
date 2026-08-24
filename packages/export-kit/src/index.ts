@@ -39,6 +39,17 @@
  * dial that trades fidelity for it, and `stats.fidelity` is the **measured** error it
  * bought, read back out of the emitted file and compared against `evaluate(ir, t)`.
  *
+ * ## One origin, stated once
+ *
+ * `AnimationIR` never says where the origin of `sceneSpace` is. `@rv/render-engine` fixes
+ * it at the **centre** of the canvas, and every exporter here follows it - the renderer is
+ * what produces the video, so it is the reference implementation and a projection does not
+ * get a second opinion. Formats whose own origin is the top-left (Lottie compositions,
+ * DragonBones armatures) are converted in {@link toCompositionSpace}, which is the only
+ * place that arithmetic exists. A root-level export therefore carries the offset visibly,
+ * where an integrator can see and adjust it, instead of silently sitting half a canvas
+ * from where the video puts it.
+ *
  * ## Determinism
  *
  * No `Date.now()`, no `Math.random()`. The one wall-clock read in the package is the frame
@@ -47,8 +58,29 @@
  * produce the same PNG bytes on any machine.
  */
 
-export type { IrFeature, FeatureUse } from './features';
-export { IR_FEATURES, describeFeature, detectFeatures, featureForChannel } from './features';
+export type { ResolvedCamera } from './scene-space';
+export { sceneCentreOf, toCompositionSpace, transformInCompositionSpace } from './scene-space';
+
+/**
+ * The IR's own feature vocabulary, re-exported.
+ *
+ * It lives in `@rv/contracts` because it describes what an `AnimationIR` *contains*, which
+ * is a property of the document and not of any one projection of it. This package used to
+ * declare its own copy; the render engine derived a weaker one from node kinds at the same
+ * time, and two packages answering "what does this document use" in two vocabularies is
+ * the drift the move exists to end.
+ *
+ * Re-exported rather than left to the caller because every warning this package returns is
+ * named in this vocabulary, and a caller reading `ExportWarning.feature` should not have to
+ * work out which package the enum came from.
+ */
+export type { IrFeature, IrFeatureUse } from '@rv/contracts';
+export {
+  IR_FEATURES,
+  describeIrFeature,
+  detectIrFeatures,
+  irFeatureForChannel,
+} from '@rv/contracts';
 
 export type {
   ApproximationNote,

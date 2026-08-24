@@ -6,23 +6,35 @@
  * because "the render took nine minutes" and "the render used Chromium" are the same
  * question and a log line is the only place to answer it.
  *
- * ## What the IR actually declares
+ * ## What the IR declares, and what a backend can draw
  *
- * ADR-0003 says `auto` "inspects the IR's declared feature set". There is no such
- * field. `AnimationIR` (`contracts/anim/ir.ts`) declares nodes, tracks, behaviours,
- * markers and a camera - and nothing anywhere in it names a filter, a shader or a blend
- * mode. So the feature set is **derived from what the IR contains**, which is honest
- * for everything the IR can express and cannot see a shader that the IR has no way to
- * request. {@link detectFeatures} therefore accepts explicit extras, so a caller that
- * knows more (a style bible declaring a post-process chain, a future IR field) can say
- * so without this function guessing.
+ * These are two different vocabularies and the distinction is load-bearing.
+ * `detectIrFeatures` in `@rv/contracts` answers "what does this document *contain*" in
+ * fifty terms, at the granularity a *format* differs on. {@link RENDER_FEATURES} answers
+ * "what can this backend *draw*" in seven, at the granularity a *rasteriser* differs on.
+ * A shape node and an SVG path shape are one drawing capability and two document
+ * features; a tint is one drawing capability reachable from two different features.
  *
- * That gap is worth closing upstream: an `AnimationIR.features` array would make the
- * routing decision data rather than inference. Reported, not patched - `@rv/contracts`
- * belongs to another agent.
+ * So this module is a **mapping between them**, not a second detector. It used to be a
+ * walk over node kinds, which was a third opinion about what a document contains and a
+ * provably weaker one: `tint` was read off `node.tint` alone, so an instance tinted
+ * entirely by an animated `tint.r/g/b` track routed to the canvas backend with `tint`
+ * never marked required. The mapping cannot make that mistake, because every feature the
+ * IR can express is in the table or deliberately absent from it.
+ *
+ * `filter` maps from nothing, and that is a statement rather than an omission: the IR has
+ * no way to request a shader, a filter or a blend mode, so no document can imply one.
+ * {@link detectFeatures} therefore still accepts explicit extras - a caller that knows
+ * about a post-process chain the IR cannot express has to be able to say so, and until
+ * the IR can express one that parameter is the only honest route.
  */
 
-import type { AnimationIR, RenderBackend } from '@rv/contracts';
+import {
+  type AnimationIR,
+  type IrFeature,
+  type RenderBackend,
+  detectIrFeatures,
+} from '@rv/contracts';
 
 import { RENDER_FEATURES, type FrameBackendId, type RenderFeature } from '../ports/frame-renderer';
 
@@ -38,45 +50,47 @@ export const CANVAS_FEATURES: ReadonlySet<RenderFeature> = new Set<RenderFeature
 export const BROWSER_FEATURES: ReadonlySet<RenderFeature> = new Set<RenderFeature>(RENDER_FEATURES);
 
 /**
- * The features a composition needs.
+ * Which drawing capability each IR feature needs.
  *
- * Derived from node kinds, which is all the IR exposes. `part` and `bone` nodes imply
- * rig-driven deformation rather than a whole-sprite transform, and an `fx-emitter` is a
- * particle system by definition.
+ * Only the features that imply one appear. A `behaviour:wind` moves a node the backend
+ * was going to draw anyway; `markers` are metadata; `track:position` is arithmetic the
+ * evaluator has already done by the time a backend sees anything. Listing those as
+ * needing nothing is the correct answer, and leaving them out of the table says it.
+ *
+ * `node:part` and `node:bone` map to `mesh-deform` because an explicit per-part or
+ * per-bone override is only meaningful against a deformable rig: a backend that can only
+ * move whole sprites will draw the instance unmoved and report success.
+ */
+const RENDER_FEATURE_BY_IR_FEATURE: Partial<Readonly<Record<IrFeature, RenderFeature>>> = {
+  'node:asset-instance': 'image',
+  'node:shape': 'shape',
+  'node:text': 'text',
+  'node:fx-emitter': 'particles',
+  'node:part': 'mesh-deform',
+  'node:bone': 'mesh-deform',
+  // Both routes to a tint. The second is the one a node-kind walk could not see.
+  'node:tint': 'tint',
+  'track:tint': 'tint',
+};
+
+/**
+ * The drawing capabilities a composition needs.
+ *
+ * A projection of `detectIrFeatures` through {@link RENDER_FEATURE_BY_IR_FEATURE}, so
+ * "what is in the document" is answered once, in `@rv/contracts`, and this module only
+ * decides what each answer costs a rasteriser.
+ *
+ * `extra` is additive and never derived: it is how a caller declares a capability the IR
+ * has no vocabulary for. See the module note.
  */
 export function detectFeatures(
   ir: AnimationIR,
   extra: readonly RenderFeature[] = [],
 ): ReadonlySet<RenderFeature> {
   const features = new Set<RenderFeature>(extra);
-  for (const node of ir.nodes) {
-    switch (node.kind) {
-      case 'shape':
-        features.add('shape');
-        break;
-      case 'text':
-        features.add('text');
-        break;
-      case 'asset-instance':
-        features.add('image');
-        if (node.tint !== undefined) features.add('tint');
-        break;
-      case 'fx-emitter':
-        features.add('particles');
-        break;
-      case 'part':
-      case 'bone':
-        // An explicit per-part or per-bone override is only meaningful against a
-        // deformable rig; a backend that can only move whole sprites will draw the
-        // instance unmoved and report success.
-        features.add('mesh-deform');
-        break;
-      case 'group':
-        break;
-      // No default: `AnimNode` is a closed discriminated union and every member is
-      // handled. A new node kind should fail the build here, not fall through to a
-      // silent "needs nothing".
-    }
+  for (const irFeature of detectIrFeatures(ir).keys()) {
+    const needed = RENDER_FEATURE_BY_IR_FEATURE[irFeature];
+    if (needed !== undefined) features.add(needed);
   }
   return features;
 }

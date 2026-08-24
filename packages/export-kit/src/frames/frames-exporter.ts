@@ -25,8 +25,8 @@ import {
   ok,
   toIso,
 } from '@rv/shared-kernel';
+import { type IrFeature, detectIrFeatures } from '@rv/contracts';
 
-import { detectFeatures, type IrFeature } from '../features';
 import type { ExportOptions, FramesOptions } from '../options';
 import type { ImageEncoderPort } from '../pixels';
 import {
@@ -183,7 +183,7 @@ export class FramesExporter implements Exporter {
     };
     artifacts.push(jsonArtifact(`${opts.directory}manifest.json`, manifest));
 
-    const warnings = diffFeatures(detectFeatures(ir), FRAMES_CAPABILITIES);
+    const warnings = diffFeatures(detectIrFeatures(ir), FRAMES_CAPABILITIES);
     if (options.strict === true) {
       const lossy = lossyWarnings(warnings);
       if (lossy.length > 0) return err(new UnsupportedFeaturesError(this.id, lossy));

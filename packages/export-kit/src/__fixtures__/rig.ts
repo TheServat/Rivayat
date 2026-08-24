@@ -107,9 +107,14 @@ export function rigFixture(): RigFixture {
  */
 export function alignedRigFixture(): RigFixture {
   const base = rigFixture();
+  // `hierarchyIr`'s `rig-root` node is authored at scene `(400, 300)`, and scene space is
+  // centre-origin. An armature is not, so the exporter writes that node at composition
+  // `(400 + 1920/2, 300 + 1080/2)` - see `src/scene-space.ts`. "Aligned" has to mean
+  // aligned *in the space the file is written in*, or the fixture is asserting that two
+  // different coordinate systems happen to share a number.
   const bones = base.rig.bones.map((bone) =>
     bone.name === 'rig-root'
-      ? { ...bone, rest: { ...bone.rest, position: { x: 400, y: 300 } } }
+      ? { ...bone, rest: { ...bone.rest, position: { x: 400 + 1920 / 2, y: 300 + 1080 / 2 } } }
       : bone,
   );
   return { ...base, rig: RigSchema.parse({ ...base.rig, bones }) };

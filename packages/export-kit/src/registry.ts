@@ -20,9 +20,8 @@ import {
   err,
   ok,
 } from '@rv/shared-kernel';
-import type { AnimationIR } from '@rv/contracts';
+import { type AnimationIR, detectIrFeatures } from '@rv/contracts';
 
-import { detectFeatures } from './features';
 import type { ExportOptions } from './options';
 import type { ImageEncoderPort } from './pixels';
 import type { ExportFormatId, ExportInput, ExportOutput, Exporter } from './port';
@@ -75,7 +74,7 @@ export class ExporterRegistry {
     readonly label: string;
     readonly warnings: readonly ExportWarning[];
   }[] {
-    const present = detectFeatures(ir);
+    const present = detectIrFeatures(ir);
     return this.list().map((exporter) => ({
       format: exporter.id,
       label: exporter.label,

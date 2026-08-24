@@ -253,6 +253,33 @@ describe('the governing principle', () => {
     expect(inbound, 'the public API names an inbound conversion').toEqual([]);
   });
 
+  it('scans the source it claims to scan, rather than an empty directory', async () => {
+    // The other half of the path bug. A scan resolved against the wrong directory fails
+    // loudly with ENOENT; a scan resolved against a directory that *exists* but holds
+    // nothing it recognises returns `[]` and the guard below passes while checking
+    // nothing at all. So the scan has to prove it found the package first.
+    const declared = await exportedDeclarations();
+    const names = new Set(declared.map((entry) => entry.name));
+
+    expect(declared.length).toBeGreaterThan(40);
+    // One export from each corner of the package, so a subdirectory dropping out of the
+    // walk is caught rather than just a total collapse.
+    for (const known of [
+      'LottieExporter',
+      'DragonBonesExporter',
+      'AtlasExporter',
+      'FramesExporter',
+      'ExporterRegistry',
+      'UnsupportedFeaturesError',
+      // `IR_FEATURES` deliberately absent: the vocabulary lives in `@rv/contracts` now and
+      // this package only re-exports it. A landmark has to be something declared here, or
+      // the scan is being checked against a file it cannot see.
+      'toCompositionSpace',
+    ]) {
+      expect(names, `the source scan never reached ${known}`).toContain(known);
+    }
+  });
+
   it('declares no inbound conversion anywhere in the shipped source, re-exported or not', async () => {
     // A `parseLottie` that is never added to `index.ts` is still a reverse mapping living
     // in the package, and the next person to need it only has to add one export line.

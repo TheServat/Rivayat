@@ -34,8 +34,8 @@ import {
   type Size,
   type StyleBible,
 } from '@rv/contracts';
-import type { ImageArtifact, ImageGenerationPort } from '@rv/providers';
-import { priceCall, pricingFor } from '@rv/providers';
+import type { ImageArtifact, ImageCostQuote, ImageGenerationPort } from '@rv/providers';
+import { priceCall, pricingFor, projectedNanoUsd } from '@rv/providers';
 import {
   type AppError,
   type Clock,
@@ -119,6 +119,23 @@ export interface ProbeSpendRequest {
   readonly images: number;
   /** What this sheet has already cost, in nano-dollars. */
   readonly spentNanoUsd: NanoUsd;
+  /**
+   * The adapter's own quote for this exact call, taken before it is made.
+   *
+   * From `ImageGenerationPort.quoteImage`, so the estimate and the eventual invoice come
+   * from one pricing table rather than from a number the composition root looked up
+   * separately. The whole quote and not just its total, because the `unpriced` arm
+   * carries a `modelRef` and a reason that a policy decision needs.
+   */
+  readonly quote: ImageCostQuote;
+  /**
+   * The number to check a ceiling against, or `null` when the model is unpriced.
+   *
+   * `null` rather than zero, and deliberately not defaulted: an unknown price that reads
+   * as free is the most expensive possible way to be wrong, so a guard has to decide
+   * what its policy is instead of being handed a plausible-looking nothing.
+   */
+  readonly projectedNanoUsd: NanoUsd | null;
 }
 
 /**
@@ -131,9 +148,10 @@ export interface ProbeSpendRequest {
  *
  * A narrow port rather than `BudgetGuard` itself, for the reason CLAUDE.md §2 gives for
  * narrow ports: this use-case does not know the run id, the policy or the ledger, and it
- * should not have to. The composition root adapts `@rv/providers`' `BudgetGuard` onto
- * this shape, where it can supply the projected price of one image on the routed model -
- * which is a number `ImageGenerationPort` cannot currently be asked for.
+ * should not have to. It does know what the call will cost, because
+ * `ImageGenerationPort.quoteImage` answers that before the call is made - so the guard is
+ * handed a real projection and the composition root only has to adapt
+ * `@rv/providers`' `BudgetGuard` onto this shape.
  *
  * Optional on {@link GenerateStyleProbeDeps} only because the default lane is the local
  * one and costs nothing. Wire it for anything that can reach the paid lane.
@@ -210,17 +228,24 @@ export class GenerateStyleProbeUseCase {
       // Before the spend, never after. A refusal returns the guard's own error rather
       // than a wrapper: `BudgetExceededError` names the ceiling and is deliberately
       // not retryable, and re-wrapping it would lose both.
+      // Priced before it is spent, from the adapter that is about to be paid. A quote
+      // taken from anywhere else could disagree with the invoice.
+      const quote = port.quoteImage({ size, count: 1 });
       const allowed = this.#budget?.check({
         lane,
         tileIndex: index,
         images: 1,
         spentNanoUsd: nanoUsd(total),
+        quote,
+        projectedNanoUsd: projectedNanoUsd(quote),
       });
       if (allowed !== undefined && isErr(allowed)) {
         this.#logger.warn('style probe: refused by the budget guard', {
           lane,
           tileIndex: index,
           spentNanoUsd: total,
+          projectedNanoUsd: projectedNanoUsd(quote),
+          modelRef: quote.modelRef,
           code: allowed.error.code,
         });
         return allowed;

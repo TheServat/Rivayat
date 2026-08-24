@@ -10,8 +10,10 @@
  * ports that behave.
  */
 
-import type { ImageUsage, ModelRef, TokenUsage } from '@rv/contracts';
+import { type ImageUsage, type ModelRef, ProviderKind, type TokenUsage } from '@rv/contracts';
 import type {
+  ImageCostQuote,
+  ImageCostRequest,
   ImageGenerationPort,
   ImageGenerationRequest,
   ImagePayload,
@@ -21,7 +23,7 @@ import type {
   VisionScoringRequest,
   VisionScoringResult,
 } from '@rv/providers';
-import { toImageArtifact } from '@rv/providers';
+import { UNPRICED, pricingFor, quoteImageCall, toImageArtifact } from '@rv/providers';
 import type { CompletionRequest, CompletionResponse, StructuredBackend } from '@rv/prompt-kit';
 import {
   type AppError,
@@ -127,18 +129,50 @@ export interface FakeImagePortOptions {
   readonly modelRef?: ModelRef;
   /** Replayed per call; the last entry repeats. `null` produces an empty image list. */
   readonly script?: readonly (AppError | null | undefined)[];
+  /**
+   * Overrides the quote this port answers with.
+   *
+   * Omitted, the fake quotes from the real catalogue for its own `modelRef`, exactly as a
+   * real adapter does - so a test that asserts on a projected cost is asserting against
+   * the price the shipped table holds and not against a number invented here.
+   */
+  readonly quote?: ImageCostQuote;
 }
 
 /** Returns one deterministic tile per call and records exactly what it was asked for. */
 export class FakeImagePort implements ImageGenerationPort {
   readonly requests: ImageGenerationRequest[] = [];
+  /** Every quote asked for, in order. A guard is only real if it is consulted. */
+  readonly quotes: ImageCostRequest[] = [];
   readonly #modelRef: ModelRef;
   readonly #script: readonly (AppError | null | undefined)[];
+  readonly #quote: ImageCostQuote | undefined;
   #index = 0;
 
   constructor(options: FakeImagePortOptions = {}) {
     this.#modelRef = options.modelRef ?? 'comfyui:sd1.5-lcm';
     this.#script = options.script ?? [];
+    this.#quote = options.quote;
+  }
+
+  /**
+   * Priced from the shipped catalogue, like a real adapter.
+   *
+   * Deliberately not a stub returning zero: `quoteImage` exists so a budget guard can run
+   * before the spend, and a fake that always says "free" would let every test pass while
+   * the guard was handed a number that means nothing.
+   */
+  quoteImage(request: ImageCostRequest): ImageCostQuote {
+    this.quotes.push(request);
+    if (this.#quote !== undefined) return this.#quote;
+
+    // `ModelRef` is `provider:model`; the catalogue is keyed on the two halves.
+    const separator = this.#modelRef.indexOf(':');
+    const provider = ProviderKind.safeParse(this.#modelRef.slice(0, separator));
+    const pricing = provider.success
+      ? pricingFor(provider.data, this.#modelRef.slice(separator + 1))
+      : UNPRICED;
+    return quoteImageCall(this.#modelRef, pricing, request);
   }
 
   generateImage(request: ImageGenerationRequest): Promise<Result<ImageResult, AppError>> {

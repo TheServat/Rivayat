@@ -347,6 +347,83 @@ describe('GenerateStyleProbeUseCase, the budget guard', () => {
     expect(spend[spend.length - 1]).toBeGreaterThan(0);
   });
 
+  it('prices each tile from the port it is about to pay, before it pays it', async () => {
+    // The estimate and the invoice have to come from one table. Quoting from anywhere
+    // else - a number the composition root looked up, a constant in this use-case - is how
+    // a guard ends up enforcing a ceiling against a price nobody is actually charged.
+    const port = new FakeImagePort({ modelRef: PRICED_IMAGE_MODEL });
+    const guard = new CountingGuard(Number.POSITIVE_INFINITY);
+
+    const result = await guarded(port, guard).execute({ bible: LOCKED, lane: 'paid' });
+    expect(isOk(result)).toBe(true);
+
+    // One quote per generation, and the quote describes the call that follows it.
+    expect(port.quotes).toHaveLength(PROBE_SUBJECTS.length);
+    for (const [index, quoted] of port.quotes.entries()) {
+      expect(quoted.count).toBe(1);
+      expect(quoted.size).toEqual(port.requests[index]?.size);
+    }
+
+    for (const asked of guard.asked) {
+      expect(asked.quote.kind).toBe('estimated');
+      expect(asked.projectedNanoUsd).not.toBeNull();
+      expect(asked.projectedNanoUsd ?? 0).toBeGreaterThan(0);
+      expect(asked.quote.modelRef).toBe(PRICED_IMAGE_MODEL);
+    }
+  });
+
+  it('tells the guard a model has no price rather than quoting it at zero', async () => {
+    // The most expensive possible way to be wrong is for an unknown price to read as
+    // free. `projectedNanoUsd` is null and the guard decides the policy; it is not this
+    // use-case's business to assume an unpriced call is affordable.
+    const port = new FakeImagePort({ modelRef: 'openrouter:some/unlisted-image-model' });
+    const guard = new CountingGuard(Number.POSITIVE_INFINITY);
+
+    const result = await guarded(port, guard).execute({ bible: LOCKED, lane: 'paid' });
+    expect(isOk(result)).toBe(true);
+
+    for (const asked of guard.asked) {
+      expect(asked.quote.kind).toBe('unpriced');
+      expect(asked.projectedNanoUsd).toBeNull();
+    }
+  });
+
+  it('lets a guard refuse an unpriced model without ever calling the provider', async () => {
+    // The policy the null exists to enable, exercised end to end.
+    const port = new FakeImagePort({ modelRef: 'openrouter:some/unlisted-image-model' });
+    const refuseUnpriced: ProbeSpendGuard = {
+      check: (request) =>
+        request.projectedNanoUsd === null
+          ? err(new BudgetExceededError('project', 0, 0))
+          : ok(UNIT),
+    };
+
+    const result = await guarded(port, refuseUnpriced).execute({ bible: LOCKED, lane: 'paid' });
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.error.kind).toBe('budget');
+    expect(port.requests).toHaveLength(0);
+    // Quoting is free; generating is not. The quote happened, the generation did not.
+    expect(port.quotes).toHaveLength(1);
+  });
+
+  it('quotes the free lane as free, with a reason rather than an empty price', async () => {
+    const port = new FakeImagePort({ modelRef: 'comfyui:sd1.5-lcm' });
+    const guard = new CountingGuard(Number.POSITIVE_INFINITY);
+    const result = await new GenerateStyleProbeUseCase({
+      imageLanes: { free: port },
+      clock: testClock(),
+      budget: guard,
+    }).execute({ bible: LOCKED });
+
+    expect(isOk(result)).toBe(true);
+    for (const asked of guard.asked) {
+      expect(asked.lane).toBe('free');
+      expect(asked.quote.kind).toBe('free');
+      expect(asked.projectedNanoUsd).toBe(0);
+    }
+  });
+
   it('generates exactly as before when no guard is wired, so the free lane is unaffected', async () => {
     const port = new FakeImagePort();
     const result = await subject(port).execute({ bible: LOCKED });

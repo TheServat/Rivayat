@@ -46,6 +46,7 @@ import type {
   Track,
   Vec2,
 } from '@rv/contracts';
+import { type IrFeature, describeIrFeature, detectIrFeatures } from '@rv/contracts';
 import {
   type EasingLibrary,
   type EvaluateOptions,
@@ -53,10 +54,9 @@ import {
   buildEasingLibrary,
   evaluate,
   orderParentFirst,
-  rotateVec,
 } from '@rv/anim-engine';
 
-import { describeFeature, detectFeatures, type IrFeature } from '../features';
+import { sceneCentreOf, toCompositionSpace } from '../scene-space';
 import type { ExportOptions, LottieOptions } from '../options';
 import {
   type ErrorStat,
@@ -141,7 +141,7 @@ function behaviourNotes(): readonly (readonly [IrFeature, ApproximationNote])[] 
     feature,
     {
       disposition: 'approximated' as const,
-      detail: `${describeFeature(feature)} is a closed-form function of time; Lottie has only keyframes, so it was sampled across the clip and written as dense keys`,
+      detail: `${describeIrFeature(feature)} is a closed-form function of time; Lottie has only keyframes, so it was sampled across the clip and written as dense keys`,
     },
   ]);
 }
@@ -491,55 +491,6 @@ function posesAt(
   return poses;
 }
 
-/**
- * The middle of the authoring canvas, in scene coordinates and in Lottie coordinates.
- *
- * The two spaces disagree about where nothing is, and this is the only place that
- * disagreement is resolved. Scene space puts the origin at the **centre** of the canvas
- * (`@rv/render-engine`, `frames/draw-list.ts`: "the origin is the centre of the canvas,
- * so the canvas spans `[-w/2, +w/2] x [-h/2, +h/2]`"), which is also what makes an
- * identity camera frame the middle of the composition. A Lottie composition puts its
- * origin at the **top-left** and has no negative half at all.
- *
- * So every position written to a layer is shifted by half the canvas. Without the shift
- * a node at scene `(0, 0)` renders in the middle of the frame and exports to the corner,
- * and everything the author composed to the left of centre falls outside the file.
- */
-function sceneCentreOf(sceneSpace: Size): Vec2 {
-  return { x: sceneSpace.width / 2, y: sceneSpace.height / 2 };
-}
-
-/**
- * A scene-space point in the Lottie composition's coordinates, camera included.
- *
- * Mirrors `cameraMatrix` in `@rv/render-engine` (`frames/matrix.ts`) term for term:
- *
- * ```
- *   screen = sceneCentre + zoom · R(-cameraRotation) · (position - cameraPosition)
- * ```
- *
- * The subtraction is against the **camera position**, not against the scene centre: the
- * camera pans, zooms and rolls about *itself*, so a pan of 100 units under a 2x zoom
- * moves content by 200 pixels. Rotating about the scene centre and then translating by
- * the raw pan - which is what this used to do - agrees with the renderer only when the
- * zoom is exactly 1 and the camera sits at the origin.
- *
- * An identity camera is still an identity: `(p - 0) · 1` rotated by nothing is `p`.
- */
-function toCompositionSpace(
-  position: Vec2,
-  camera: SceneSnapshot['camera'],
-  sceneSpace: Size,
-  foldCamera: boolean,
-): Vec2 {
-  const centre = sceneCentreOf(sceneSpace);
-  if (!foldCamera) return { x: centre.x + position.x, y: centre.y + position.y };
-
-  const relative = { x: position.x - camera.position.x, y: position.y - camera.position.y };
-  const rotated = rotateVec(relative, -camera.rotation);
-  return { x: centre.x + rotated.x * camera.zoom, y: centre.y + rotated.y * camera.zoom };
-}
-
 function toPose(
   resolved: ResolvedNode,
   visible: boolean,
@@ -548,7 +499,9 @@ function toPose(
   foldCamera: boolean,
 ): LayerPose {
   const world = resolved.worldTransform;
-  const position = toCompositionSpace(world.position, camera, sceneSpace, foldCamera);
+  // The camera is passed only when it is being folded in; omitted, the conversion is the
+  // centre shift alone. See `../scene-space.ts` for why the shift is not optional.
+  const position = toCompositionSpace(world.position, sceneSpace, foldCamera ? camera : undefined);
   const zoom = foldCamera ? camera.zoom : 1;
   return {
     position: [position.x, position.y],
@@ -1251,7 +1204,7 @@ function assembleWarnings(
   opts: ResolvedLottieOptions,
   built: BuiltDocument,
 ): readonly ExportWarning[] {
-  const present = detectFeatures(ir);
+  const present = detectIrFeatures(ir);
   const base = diffFeatures(present, LOTTIE_CAPABILITIES);
 
   const warnings: ExportWarning[] = base.map((warning) => {
