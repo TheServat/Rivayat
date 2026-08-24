@@ -49,6 +49,7 @@ function maximalIr(): AnimationIR {
   const text = ids.node();
   const shape = ids.node();
   const emitter = ids.node();
+  const prop = ids.node();
 
   const channels = [
     'position.x',
@@ -88,7 +89,14 @@ function maximalIr(): AnimationIR {
         name: 'hero',
         parentId: root,
         kind: 'asset-instance',
-        asset: { assetId: ids.asset(), versionId: ids.assetVersion() },
+        // `video` rather than the default `cutout`: footage is the one representation a
+        // canvas backend genuinely cannot draw, so it is the one that must appear in a
+        // format's warnings rather than being silently dropped.
+        asset: {
+          assetId: ids.asset(),
+          versionId: ids.assetVersion(),
+          representation: 'video',
+        },
         clipName: 'idle',
         tint: '#ff8800',
         flipX: true,
@@ -125,6 +133,17 @@ function maximalIr(): AnimationIR {
         shape: 'path',
         geometry: 'M0,0 L10,10',
         fill: '#112233',
+      },
+      {
+        // Parented to the *instance* rather than to the root, because an attachment
+        // refines where on its parent a node hangs and only an asset-instance has a rig
+        // to hang off.
+        id: prop,
+        name: 'lantern',
+        parentId: instance,
+        kind: 'asset-instance',
+        asset: { assetId: ids.asset(), versionId: ids.assetVersion() },
+        attachment: { anchor: 'grip-right' },
       },
       {
         id: emitter,
@@ -193,6 +212,10 @@ function maximalIr(): AnimationIR {
       focusNodeId: instance,
       shakeAmplitude: 0.2,
       shakeSeed: 5,
+      // Not orthographic, because this fixture's job is to exercise every member of
+      // `IR_FEATURES` - and the default would leave `camera:projection` undetected,
+      // which is precisely what the test below is built to notice.
+      projection: 'isometric',
     },
   });
 }

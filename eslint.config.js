@@ -124,11 +124,15 @@ export default tseslint.config(
     },
   },
 
-  // Standalone CLI scripts under tools/ are not part of the typed program and print
-  // to the terminal by design.
+  // Standalone scripts that are not part of the typed program and print to the terminal
+  // by design: the `tools/` utilities, and each app's `e2e-live/` checks. The latter live
+  // beside the app whose dev dependencies they import - a live browser check needs
+  // `@playwright/test`, which is `apps/web`'s and not the root's - and they run a real
+  // browser against real servers, so their output *is* the deliverable.
   {
-    files: ['tools/**/*.{mjs,js,cjs}'],
+    files: ['tools/**/*.{mjs,js,cjs}', 'apps/*/e2e-live/**/*.{mjs,js,cjs}'],
     ...tseslint.configs.disableTypeChecked,
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
     rules: { 'no-console': 'off' },
   },
 

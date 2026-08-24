@@ -398,6 +398,162 @@ re-layout) — instead of maintaining three parallel projects.
 | Sprite sheets | `maxrects-packer` 2.7.3 (MaxRects bin packing)                                                                   |
 | Tests         | Vitest 4.1.11 (unit/integration), Supertest (API e2e), Playwright (web e2e + visual regression)                  |
 
+---
+
+## 9. Voice / TTS
+
+> Verified 2026-08-24. Two of the three engines were read from **primary sources on this
+> machine** - the model card shipped inside the weights, and the installed Python package -
+> rather than from documentation sites. ElevenLabs was read from its own API reference and
+> pricing pages and **has not been called**: no key exists here.
+
+### The finding that decides the architecture
+
+**Chatterbox's stock multilingual weights do not speak Persian.** Read out of
+`SUPPORTED_LANGUAGES` in `chatterbox/mtl_tts.py` (chatterbox-tts 0.1.7, installed and
+inspected):
+
+```text
+ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh   (23, no fa)
+```
+
+The series language is Persian. Sending Persian to these weights does not fail - it
+produces fluent, confident sound in the wrong language, which passes every automated
+check in this repository. So language is a **declared capability per checkpoint**, the
+adapter refuses before it opens a socket, and the router fails over. Community Persian
+fine-tunes of the same architecture exist (`Thomcles/Chatterbox-TTS-Persian-Farsi` is in
+this machine's HuggingFace cache), which is exactly why the declaration is per checkpoint
+and not per engine.
+
+### Engine comparison
+
+|                 | **Higgs TTS 3**                               | **Chatterbox**              | **ElevenLabs**                                                            |
+| --------------- | --------------------------------------------- | --------------------------- | ------------------------------------------------------------------------- |
+| Emotion channel | 21 named inline tags                          | one scalar (`exaggeration`) | `voice_settings` + v3 audio tags                                          |
+| Persian         | **yes**, production tier                      | **no** (stock weights)      | listed for v3                                                             |
+| Voice selection | zero-shot clone; presets on the hosted API    | clone or predefined         | voice id                                                                  |
+| Timing returned | no                                            | no                          | **yes** (`/with-timestamps`)                                              |
+| Seed            | not documented on `/v1/audio/speech`          | yes                         | yes (0..4294967295)                                                       |
+| Output          | 24 kHz                                        | 24 kHz (`S3GEN_SR`)         | mp3/opus/pcm/wav                                                          |
+| Watermark       | none documented                               | **always** (Resemble Perth) | none documented                                                           |
+| Price           | free self-hosted; hosted price not published  | free                        | $0.10/1K chars (v3, multilingual v2); $0.05/1K (v3 conversational, Flash) |
+| Licence         | research / non-commercial + Creator Use Grant | MIT                         | commercial                                                                |
+
+### Higgs TTS 3 - the 43 control tags [verified from the shipped model card]
+
+`bosonai/higgs-tts-3-4b`, from `PROMPTING.md` and `README.md` inside the weights. The
+model card's own warning is why this is a closed table in code and not a template:
+_"Only the tags below are recognized - anything else degrades output or gets read
+literally."_
+
+Every tag is `<|category:tag|>`. **Placement is load-bearing:** emotion, style and the
+prosody `speed_* / pitch_* / expressive_*` tags are _sentence-level_ and go at the start;
+`pause`, `long_pause` and every `sfx` are _inline_ and fire where they are placed.
+
+- **Emotion (21)** — `elation` `amusement` `enthusiasm` `determination` `pride`
+  `contentment` `affection` `relief` `contemplation` `confusion` `surprise` `awe`
+  `longing` `arousal` `anger` `fear` `disgust` `bitterness` `sadness` `shame`
+  `helplessness`
+- **Style (3)** — `singing` `shouting` `whispering`
+- **Prosody (10)** — `speed_very_slow` (~0.65x) `speed_slow` (~0.85x) `speed_fast`
+  (~~1.2x) `speed_very_fast` (~~1.4x) `pitch_low` (~~-3 semitones) `pitch_high` (~~+2.5)
+  `expressive_high` `expressive_low` `pause` (~400-700 ms) `long_pause` (~700-1500 ms)
+- **Sound effects (9, inline, each paired with its onomatopoeia and no space)** —
+  `cough` `laughter` `crying` `screaming` `burping` `humming` `sigh` `sniff` `sneeze`
+
+Languages: 102 at single-digit WER/CER, split into 85 production-quality and 17 usable;
+**Persian is in the production tier.** Serving is OpenAI-compatible `POST
+/v1/audio/speech` under `sgl-omni` or `vllm-omni`, taking
+`references: [{audio_path, text}]` for cloning; the hosted `api.boson.ai` endpoint spells
+the same idea `ref_audio` / `ref_text` and adds `voice` for preset speakers. **The two
+dialects are not interchangeable**, which is why the adapter has a `dialect` option.
+
+**Not runnable on this machine.** ~4B parameters, benchmarked on 1x H100; §0 records
+6 GB VRAM here. `vllm-omni` is also Linux-only. The weights' own `README` reserves
+production and hosted use for a separate commercial licence - a decision the owner has to
+make before this engine ships an episode.
+
+### Chatterbox [verified from the installed package]
+
+`chatterbox-tts` 0.1.7, MIT. Signatures read directly from the wheel:
+
+```python
+# chatterbox/tts.py
+generate(text, repetition_penalty=1.2, min_p=0.05, top_p=1.0,
+         audio_prompt_path=None, exaggeration=0.5, cfg_weight=0.5, temperature=0.8)
+# chatterbox/mtl_tts.py adds a required `language_id` and defaults repetition_penalty=2.0
+```
+
+`S3GEN_SR = 24000` (`chatterbox/models/s3gen/const.py`). Every output carries a Resemble
+AI Perth neural watermark; no documented way to disable it.
+
+The vendor publishes two parameter anchors and the reason they move together: the neutral
+pair `(exaggeration 0.5, cfg 0.5)`, the dramatic pair `(~0.7, ~0.3)`, and _"higher
+exaggeration tends to speed up speech; reducing cfg helps compensate with slower, more
+deliberate pacing."_ The adapter interpolates linearly between those two points and clamps
+outside them - there is no third published point to fit a curve to.
+
+**Generated locally and measured (2026-08-24, Quadro RTX 3000, CUDA, 24 kHz, English):**
+
+| exaggeration / cfg   | audio length | generation |
+| -------------------- | ------------ | ---------- |
+| 0.5 / 0.5 (neutral)  | 3.16 s       | 6.8 s      |
+| 0.7 / 0.3 (dramatic) | 3.00 s       | 4.6 s      |
+| 0.3 / 0.5 (damped)   | 3.60 s       | 5.4 s      |
+
+Same sentence, three deliveries: the documented relationship reproduces - pushing
+`exaggeration` up shortens the line, pulling it down lengthens it. Model load took ~36 s
+from a warm local checkpoint and ~2.5 GB of host RAM.
+
+There is **no official HTTP server**. The adapter targets `POST /tts` on
+`devnen/Chatterbox-TTS-Server`, the documented community server, because it is the surface
+that exposes `exaggeration` and `cfg_weight`; the OpenAI-compatible `/v1/audio/speech` on
+the same server accepts only `input`, `voice`, `response_format`, `speed` and `seed`, so
+routing through it would discard the only expressive control this engine has.
+
+### ElevenLabs [documentation only - never called]
+
+`POST /v1/text-to-speech/{voice_id}` and `/v1/text-to-speech/{voice_id}/with-timestamps`,
+header `xi-api-key`.
+
+- `voice_settings`: `stability` 0-1 (default 0.5), `similarity_boost` (0.75), `style` (0),
+  `use_speaker_boost` (true), `speed` **0.7-1.2** (1.0). Low stability is documented as
+  "more emotional and expressive, but prone to hallucinations" and high as "highly stable,
+  but less responsive to directional prompts" - so an expressive line wants _less_
+  stability, which is easy to implement backwards.
+- Models and limits: `eleven_v3` (70+ languages incl. Persian, 5,000 chars, $0.10/1K),
+  `eleven_v3_conversational` ($0.05/1K), `eleven_multilingual_v2` (29 languages, 10,000
+  chars, $0.10/1K), `eleven_flash_v2_5` (32 languages, 40,000 chars, $0.05/1K).
+- **Audio tags are v3-only**, written inline in square brackets. The documented list is
+  _examples, not a closed vocabulary_: `[laughs]` `[laughs harder]` `[starts laughing]`
+  `[wheezing]` `[whispers]` `[sighs]` `[exhales]` `[sarcastic]` `[curious]` `[excited]`
+  `[crying]` `[snorts]` `[mischievously]`, plus sound effects and experimental accents.
+- `/with-timestamps` returns `audio_base64` plus `alignment` and `normalized_alignment`,
+  each `{characters[], character_start_times_seconds[], character_end_times_seconds[]}`.
+
+**Could not confirm:** the numeric values behind the v3 stability presets
+(Creative / Natural / Robust). They are documented by name only on the pages checked, and
+the 0.0 / 0.5 / 1.0 mapping that circulates elsewhere is not on them. The adapter
+therefore maps continuously across the documented 0-1 range rather than snapping to three
+numbers we would be guessing at. **Also unconfirmed:** whether audio tag characters are
+billed. The adapter counts them, because they are characters sent, and under-counting is
+the failure that costs money silently.
+
+### Consequences for this codebase
+
+1. **Emotion is declared once** (`@rv/contracts/audio`) with a valence and an arousal per
+   member, because one engine cannot be told an emotion at all. Each adapter translates,
+   and reports per call what it had to approximate or drop.
+2. **An adapter emits only tags it has verified.** Higgs's catalogue is closed and checked
+   in a test; ElevenLabs's is open, so only documented tags are emitted and every other
+   emotion is reported as dropped rather than guessed at.
+3. **Speech is priced per character in its own table** (`KNOWN_SPEECH_MODELS`), because
+   nothing else in the system bills that way, and `quoteSpeech` counts the string the
+   adapter is about to send rather than the raw line.
+4. **No new npm dependency** was added for any of this. The adapters speak HTTP through
+   the existing `JsonHttpClient`; the only new local code that touches bytes is a WAV
+   header reader, because a cue whose length is guessed mistimes everything after it.
+
 ## Sources
 
 - https://github.com/ollama/ollama/issues/15540
@@ -438,3 +594,16 @@ Colab lane (§2, verified 2026-08-23):
 - https://huggingface.co/comfyanonymous/flux_text_encoders (t5xxl_fp8_e4m3fn 4,893,934,904 B; clip_l 246,144,152 B)
 - https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/
 - https://www.kaggle.com/general/108481 (Kaggle 30 GPU-h/week, T4x2 / P100)
+
+Voice / TTS (§9, verified 2026-08-24):
+
+- `bosonai/higgs-tts-3-4b` model card, read from the local HuggingFace cache: `PROMPTING.md` (43-tag catalogue, placement rules), `README.md` (102 languages incl. Persian, control-token tables, `/v1/audio/speech` examples, licence)
+- https://docs.boson.ai/models/higgs-tts/overview (hosted API: `ref_audio` / `ref_text` / `voice` / `response_format`)
+- https://huggingface.co/bosonai/higgs-audio-v3-tts-4b · https://recipes.vllm.ai/bosonai/higgs-audio-v3-tts-4b (vLLM-Omni serving)
+- `chatterbox-tts` 0.1.7 wheel, installed and read: `chatterbox/tts.py`, `chatterbox/mtl_tts.py` (`generate` signatures, `SUPPORTED_LANGUAGES`), `chatterbox/models/s3gen/const.py` (`S3GEN_SR = 24000`)
+- https://github.com/resemble-ai/chatterbox · https://huggingface.co/ResembleAI/chatterbox (MIT, Perth watermark, the two published parameter anchors)
+- https://github.com/devnen/Chatterbox-TTS-Server (documented `POST /tts` body; the OpenAI-compatible endpoint's narrower field set)
+- https://elevenlabs.io/docs/api-reference/text-to-speech/convert · .../convert-with-timestamps (request fields, `voice_settings` ranges, alignment response)
+- https://elevenlabs.io/docs/models (per-model language counts and character limits)
+- https://elevenlabs.io/pricing/api (per-1K-character rates)
+- https://elevenlabs.io/docs/best-practices/prompting/eleven-v3 (the documented audio-tag examples; the stability presets named but not numbered)
