@@ -171,6 +171,57 @@ is caused by the CI work; all are in code being written right now.
       no row at all. Setting `include` would make the floors honest and would put
       `apps/cli` at 0 % on the same day — worth doing together with its first tests
 
+## W9 — Animation: providers, representations, projection (ADR-0008)
+
+From the owner's `universal_ai_animation_system.md`, scoped by
+[ADR-0008](adr/ADR-0008-motion-providers-and-representations.md). Most of the document
+was already true; these are the parts that were not.
+
+- [~] **`MotionProvider` port**, with the IR as the determinism boundary — providers
+  author, the IR is the authored motion, `evaluate(ir, t)` calls nothing. Keyframes
+  and procedural behaviours re-expressed as the first two providers, byte-identical
+- [~] **Anchors** — named points on an asset that retargeting aligns to and props attach
+  to, so a character can hold a sword without any code naming a bone
+- [~] **Clip library and retargeting** — a walk cycle authored once applies to every
+  compatible biped. Existing per-asset clips must keep resolving and the dedup key
+  must not change under them
+- [~] **`AssetRepresentation`** — `flat`, `cutout`, `layered-2.5d`, `video`, with
+  `isometric` and `mesh` reserved. **Lives on the pinned asset ref**, not the asset
+  record: a render resolves nothing at render time, and a representation looked up
+  from a mutable record at export time means two exports of one IR can differ
+- [~] **`layered-2.5d`** — the `parallax` behaviour exists and has nothing to consume,
+  which is what makes this worth doing now
+- [~] **Camera projection** — `isometric` as a value, not an engine. Applied by
+  consumers so `worldTransform.position` stays scene space; depth folded into
+  position before the matrix so `Matrix2D` survives. `orthographic` must stay
+  byte-identical to today, and there are frame-hash goldens to prove it on
+- [ ] Depth estimation pass on ComfyUI, feeding `layered-2.5d`
+
+### W9a — Extract the scene geometry, before projection lands
+
+- [ ] **Four independent implementations of scene→screen geometry**, plus three
+      independent paint-order sorts: `render-engine/src/frames/matrix.ts`,
+      `export-kit/src/scene-space.ts`, `apps/web/.../timeline/player/scene-space.ts`,
+      and the implicit one inside `reframe/focus-track.ts`.
+
+      The home is `@rv/anim-engine` — pure, no IO, browser-safe, already at the 100 %
+          tier, and already the shared home of the bezier solver *for exactly this stated
+          reason*. `apps/web` cannot import `@rv/render-engine` and should not: the
+          dependency rule is right, the geometry is just in the wrong package.
+
+          Do this before isometric, not after. One wrong constant in the shared export-kit
+          module fails 18 tests across two formats; the same constant wrong in one of four
+          unshared copies fails nothing until somebody watches the output.
+
+- [x] **The reframer solved the crop against the wrong rectangle.** `sampleFocusTrack`
+      located the subject with `worldToNorm(position, sceneSpace)`, ignoring the camera —
+      but the crop is applied to a master with the camera baked in. On the repo's own
+      camera fixture the error reached 25 % of frame width, against a 9:16 crop that is
+      about 32 % of a 16:9 master, so the subject leaves the frame. Live on the shipping
+      path. The test that should have caught it asserted
+      `sampleFocusTrack(...) === sampleFocusTrack(...)` — determinism only, never
+      _where_, and it would have passed with the function gutted to return a constant
+
 ## W8 — The proof
 
 - [ ] Produce a complete sample series end to end, on the free lane, at `$0`
