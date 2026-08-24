@@ -219,21 +219,42 @@ importers:
       '@rv/anim-engine':
         specifier: workspace:*
         version: link:../../packages/anim-engine
+      '@rv/asset-engine':
+        specifier: workspace:*
+        version: link:../../packages/asset-engine
+      '@rv/asset-registry':
+        specifier: workspace:*
+        version: link:../../packages/asset-registry
       '@rv/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@rv/core-domain':
         specifier: workspace:*
         version: link:../../packages/core-domain
+      '@rv/narrative-memory':
+        specifier: workspace:*
+        version: link:../../packages/narrative-memory
+      '@rv/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
       '@rv/prompt-kit':
         specifier: workspace:*
         version: link:../../packages/prompt-kit
       '@rv/providers':
         specifier: workspace:*
         version: link:../../packages/providers
+      '@rv/render-engine':
+        specifier: workspace:*
+        version: link:../../packages/render-engine
+      '@rv/settings':
+        specifier: workspace:*
+        version: link:../../packages/settings
       '@rv/shared-kernel':
         specifier: workspace:*
         version: link:../../packages/shared-kernel
+      '@rv/story-engine':
+        specifier: workspace:*
+        version: link:../../packages/story-engine
       '@rv/style-engine':
         specifier: workspace:*
         version: link:../../packages/style-engine
@@ -262,6 +283,12 @@ importers:
       '@fontsource-variable/vazirmatn':
         specifier: 5.3.0
         version: 5.3.0
+      '@phosphor-icons/vue':
+        specifier: 2.2.1
+        version: 2.2.1(vue@3.5.41(typescript@6.0.3))
+      '@rv/anim-engine':
+        specifier: workspace:*
+        version: link:../../packages/anim-engine
       '@rv/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -561,6 +588,9 @@ importers:
 
   packages/persistence:
     dependencies:
+      '@rv/asset-engine':
+        specifier: workspace:*
+        version: link:../asset-engine
       '@rv/asset-registry':
         specifier: workspace:*
         version: link:../asset-registry
@@ -2179,6 +2209,12 @@ packages:
 
   '@paralleldrive/cuid2@2.3.1':
     resolution: {integrity: sha512-XO7cAxhnTZl0Yggq6jOgjiOHhbgcO4NqFqwSmQpjK3b6TEE6Uj/jfSk6wzYyemh3+I0sHirKSetjQwn5cZktFw==}
+
+  '@phosphor-icons/vue@2.2.1':
+    resolution: {integrity: sha512-3RNg1utc2Z5RwPKWFkW3eXI/0BfQAwXgtFxPUPeSzi55jGYUq16b+UqcgbKLazWFlwg5R92OCLKjDiJjeiJcnA==}
+    engines: {node: '>=14'}
+    peerDependencies:
+      vue: '>=3.2.39'
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -6308,6 +6344,10 @@ snapshots:
   '@paralleldrive/cuid2@2.3.1':
     dependencies:
       '@noble/hashes': 1.8.0
+
+  '@phosphor-icons/vue@2.2.1(vue@3.5.41(typescript@6.0.3))':
+    dependencies:
+      vue: 3.5.41(typescript@6.0.3)
 
   '@pinojs/redact@0.4.0': {}
 

@@ -84,7 +84,19 @@ milestone demos name roughly twenty.
 
 ## W4 — Orchestration and the API (Epic J)
 
-All twelve stages report as implemented. What is not proven:
+**Correction.** This section previously read "all twelve stages report as implemented".
+That was wrong, and it was wrong because `/api/health` says so: `implementedStages()`
+returns every registered stage key, and nine of the twelve are bound to a stub that
+returns 501. `handlers.ts` is honest about it in its own header — three stages are real
+(`intake`, `resolve`, `render`) — but the accessor one layer up is not, and I took the
+endpoint at its word. Routed for fixing.
+
+- [ ] **Nine of twelve stages are stubs** returning 501, naming the package that owes
+      the work. That is the honest state and the wiring is testable because of it, but
+      it is not what this document said
+- [ ] `implementedStages()` must report what is _real_, not what is _registered_
+
+What else is not proven:
 
 - [~] Checkpoint and **resume a killed render to a byte-identical result**
 - [~] Run cancellation distinguishable from failure — see the `runs.state` gap below
@@ -205,13 +217,13 @@ was already true; these are the parts that were not.
       and the implicit one inside `reframe/focus-track.ts`.
 
       The home is `@rv/anim-engine` — pure, no IO, browser-safe, already at the 100 %
-          tier, and already the shared home of the bezier solver *for exactly this stated
-          reason*. `apps/web` cannot import `@rv/render-engine` and should not: the
-          dependency rule is right, the geometry is just in the wrong package.
+              tier, and already the shared home of the bezier solver *for exactly this stated
+              reason*. `apps/web` cannot import `@rv/render-engine` and should not: the
+              dependency rule is right, the geometry is just in the wrong package.
 
-          Do this before isometric, not after. One wrong constant in the shared export-kit
-          module fails 18 tests across two formats; the same constant wrong in one of four
-          unshared copies fails nothing until somebody watches the output.
+              Do this before isometric, not after. One wrong constant in the shared export-kit
+              module fails 18 tests across two formats; the same constant wrong in one of four
+              unshared copies fails nothing until somebody watches the output.
 
 - [x] **The reframer solved the crop against the wrong rectangle.** `sampleFocusTrack`
       located the subject with `worldToNorm(position, sceneSpace)`, ignoring the camera —
