@@ -238,6 +238,74 @@ remaining unknown at no cost, and it answers it better than any amount of furthe
 
 ---
 
+---
+
+## What "an episode" means — and a 25-minute one
+
+**Correction.** The figures above assume **35 images an episode**, which is a 60–90 second
+demo. I should have said so where the number first appears. For the 20–30 minute episodes
+this project is actually for, the arithmetic changes — though **far less than duration
+suggests**, and the reason is the whole economic argument of the architecture.
+
+**The driver is not length. It is how many distinct things appear**, because an asset is
+generated once and reused forever. A 25-minute episode makes that argument stronger, not
+weaker: it reuses each asset more.
+
+### A 25-minute pilot, with an empty library
+
+| what        | count        | generations | why                                                                                                                                           |
+| ----------- | ------------ | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| cast        | 8 characters | ~80         | 2 wardrobe parts-sheets + ~8 expression sheets each. **Poses are not generated** — they are procedural on the rig, which is what rigging buys |
+| locations   | 10–15        | ~25         | one layered 2.5D plate each, plus time-of-day variants                                                                                        |
+| props       | ~40          | ~40         | distinct objects that appear on screen                                                                                                        |
+| effects     | —            | **0**       | procedural: dust, smoke, rain, wind, hair, cloth                                                                                              |
+| gate rework | —            | ~45         | assuming ~30 % of takes rejected and repaired                                                                                                 |
+| **total**   |              | **≈ 190**   |                                                                                                                                               |
+
+### Episode two onwards
+
+The cast exists. Most locations exist. Most props exist. A typical later episode adds one
+character, two locations and ten props: **≈ 20 generations.**
+
+### What that costs on Comfy Cloud Creator
+
+At ~10 s an image and 0.266 credits/second:
+
+|               | generations | credits | ≈ cost |
+| ------------- | ----------- | ------- | ------ |
+| pilot         | 190         | 505     | $2.40  |
+| later episode | 20          | 53      | $0.25  |
+
+Creator's 7,400 credits a month buys **one pilot plus about 130 later episodes**, or roughly
+**14 pilots**. A 25-minute episode is therefore about **5× a 60-second demo for the pilot,
+and cheaper than it every time afterwards.**
+
+### Three costs that _do_ scale with duration
+
+**Rendering.** 25 minutes at 30 fps is **45,000 frames** for the master. Measured on this
+machine today: the grove scene renders **144 frames in 863 ms — 167 frames/second** at
+1280×720. That scene has five nodes, so treat it as a ceiling rather than a rate; a real
+scene with image assets, text and a dozen rigs will be slower. At a realistic 20–40 fps a
+25-minute master is **20–40 minutes of local render** — free, on your own machine, and
+resumable to a byte-identical result if it is killed.
+
+The seven platform deliverables are **crops of that one master**, not seven renders. That is
+what the reframer is for.
+
+**Audio.** Dialogue scales directly with duration: a 25-minute episode is roughly
+3,000–4,000 words, call it 20,000–25,000 characters. Free on the local engines. On
+ElevenLabs it is real money every episode — which is the strongest argument for the local
+speech lane.
+
+**The script.** A 25-minute outline is substantial, and Ollama local is free.
+
+### The number that must be measured before any of this is a budget
+
+**The 30 % rework rate above is a guess.** On the local card the real figure is currently
+**100 %** — the quality gate rejects every take, because SD 1.5 cannot draw the locked style.
+Until that is measured on the real lane, the pilot estimate is arithmetic on an assumption,
+not a budget. It is the first thing the free runs should tell us.
+
 ## Corrections to the previous version of this document
 
 Recorded rather than silently edited, because both were wrong in the same direction —
