@@ -79,6 +79,32 @@ export const OLLAMA_DEFAULT_BASE_URL = 'http://127.0.0.1:11434';
  * head. Wiring narrows this per model rather than the adapter guessing from the id,
  * which would break the first time a name changes.
  */
+/**
+ * The vision model that fits beside ComfyUI on a 6 GB card, benchmarked 2026-08-23.
+ *
+ * Not a preference. `tools/scripts/vision-gate-bench.mjs` scored four candidates on the
+ * *same* rejected take - the 2x2 contact sheet of photographs that the splitter, the
+ * assigner and the rigger all accepted - using the real rubric from the real locked
+ * paper-cutout StyleBible, with ComfyUI resident and holding 3.4 GB:
+ *
+ * | model             | s/image (unseen) | caught the contact sheet |
+ * | ----------------- | ---------------- | ------------------------ |
+ * | **`qwen3-vl:4b`** | **1.1 - 10**     | **yes** (style-match 0)  |
+ * | `qwen3.5:latest`  | 13.8 - 21.6      | yes (style-match 0)      |
+ * | `qwen3-vl:2b`     | 1.8              | **no** (style-match 1)   |
+ * | `minicpm-v4.6:1b` | 1.1              | **no** (style-match 1)   |
+ * | `gemma4:26b`      | -                | will not load            |
+ *
+ * Two findings the table understates. `gemma4:26b` - the previous `.env` default - does
+ * not merely run slowly: Ollama refuses it outright with *"llama-server reported
+ * out-of-memory during startup: CUDA error: out of memory"*. And the two models that
+ * miss the defect are not blind: asked directly, `minicpm-v4.6:1b` counts the four
+ * photographs correctly and then rates them a perfect paper-cutout match. Seeing an
+ * image and judging it against a style rubric are different abilities, and only the
+ * second one is a gate. A fast gate that misses the defect is worse than no gate.
+ */
+export const OLLAMA_RECOMMENDED_VISION_MODEL = 'qwen3-vl:4b';
+
 export const OLLAMA_CAPABILITIES: readonly Capability[] = [
   'text-generation',
   'structured-generation',
@@ -154,7 +180,10 @@ export class OllamaAdapter
 
     const tokens = tokensOf(chat.value);
     return ok({
-      text: chat.value.message.content,
+      text:
+        request.jsonSchema === undefined
+          ? chat.value.message.content
+          : schemaConstrainedText(chat.value),
       usage: tokens,
       modelId: this.id,
       // Local inference. Recorded explicitly so the ledger shows the free lane
@@ -251,7 +280,7 @@ export class OllamaAdapter
     );
     if (isErr(chat)) return chat;
 
-    const sheet = parseScoreSheet(chat.value.message.content, request.rubric);
+    const sheet = parseScoreSheet(schemaConstrainedText(chat.value), request.rubric);
     if (isErr(sheet)) return sheet;
 
     const tokens = tokensOf(chat.value);
@@ -322,6 +351,25 @@ export class OllamaAdapter
       context: { path, model: this.#model },
     });
   }
+}
+
+/**
+ * The model's answer to a `format`-constrained call, whichever channel it arrived on.
+ *
+ * Ollama 0.32.15 puts a grammar-constrained response in `message.thinking` and leaves
+ * `message.content` empty on every thinking-capable vision model measured here
+ * (`qwen3-vl:2b`, `qwen3-vl:4b`), regardless of `think: false`. The JSON in `thinking`
+ * is complete and valid - it is the same bytes, on the other field.
+ *
+ * Only applied where a schema was requested. On a plain text call the two channels mean
+ * what they say, and preferring `thinking` there would return the model's reasoning to a
+ * caller that asked for prose. Downstream, both `extractJson` and `parseScoreSheet`
+ * strip a `<think>` block anyway, so a model that mixes the two is still handled.
+ */
+function schemaConstrainedText(response: OllamaChatResponse): string {
+  const content = response.message.content;
+  if (content.trim() !== '') return content;
+  return response.message.thinking ?? content;
 }
 
 function tokensOf(response: OllamaChatResponse): PromptTokenUsage {

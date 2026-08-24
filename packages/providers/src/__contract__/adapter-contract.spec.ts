@@ -39,16 +39,22 @@ import {
 import { fixedClock } from '../__fixtures__/support';
 import { readWorkflow } from '../adapters/comfyui/__fixtures__/workflows';
 import { ComfyUiAdapter } from '../adapters/comfyui/comfyui-adapter';
-import { COMFY_WORKFLOW_FILES } from '../adapters/comfyui/load-workflows';
+import {
+  COMFY_OPTIONAL_WORKFLOW_FILES,
+  COMFY_WORKFLOW_FILES,
+} from '../adapters/comfyui/load-workflows';
 import { GeminiAdapter } from '../adapters/gemini/gemini-adapter';
 import { OllamaAdapter } from '../adapters/ollama/ollama-adapter';
 import { OpenRouterAdapter } from '../adapters/openrouter/openrouter-adapter';
 import { CAPABILITY_METHOD, CapabilityMatrix } from '../ports/capability-matrix';
-import type { ProviderAdapter } from '../ports/provider-adapter';
+import { declaresCapability, type ProviderAdapter } from '../ports/provider-adapter';
+import { type ImageGenerationPort, projectedNanoUsd } from '../ports/image-generation';
+import { supportsPartsSheet } from '../ports/parts-sheet';
 
 const workflows = {
   txt2img: readWorkflow(COMFY_WORKFLOW_FILES.txt2img),
   img2img: readWorkflow(COMFY_WORKFLOW_FILES.img2img),
+  partsSheet: readWorkflow(COMFY_OPTIONAL_WORKFLOW_FILES.partsSheet),
 };
 
 interface Case {
@@ -368,6 +374,74 @@ async function invokeWithSignal(
       ).generateText({ messages: [{ role: 'user', content: 'hi' }], signal });
   }
 }
+
+/**
+ * The two declarations the capability matrix cannot check for itself.
+ *
+ * `Capability` has one member per narrow port, and neither the parts-sheet graph nor the
+ * pre-call cost quote is a `Capability` - the first because which *graph* runs is decided
+ * by the decomposition policy rather than by the router, the second because it is a
+ * precondition of `image-generation` rather than a separate one. Both reasons are argued
+ * where they are declared. The consequence is that `CapabilityMatrix.register` cannot
+ * compare the claim against the implementation, so this suite does it instead, once,
+ * over every adapter the package ships.
+ */
+describe.each(CASES)('provider contract, unmatrixed declarations: $name', (testCase) => {
+  function build(): ProviderAdapter {
+    const stub = new FetchStub();
+    if (testCase.stubsGlobalFetch === true) vi.stubGlobal('fetch', stub.fetch);
+    return testCase.build(stub);
+  }
+
+  it('quotes an image call before making it, or does not claim to generate images', () => {
+    const adapter = build();
+    if (!declaresCapability(adapter, 'image-generation')) {
+      // Nothing to quote, and nothing may pretend to.
+      expect((adapter as Partial<ImageGenerationPort>).quoteImage).toBeUndefined();
+      return;
+    }
+
+    const port = adapter as unknown as ImageGenerationPort;
+    const quote = port.quoteImage({ size: { width: 1024, height: 1024 } });
+
+    expect(['free', 'estimated', 'unpriced']).toContain(quote.kind);
+    expect(quote.modelRef).toBe(adapter.modelRef);
+    // An unpriced model must not be reported as costing nothing: that is the arm whose
+    // whole purpose is to stop an unknown model looking free to the budget guard.
+    const projected = projectedNanoUsd(quote);
+    if (quote.kind === 'unpriced') expect(projected).toBeNull();
+    else expect(projected).toBeGreaterThanOrEqual(0);
+  });
+
+  it('quotes purely: the same request, the same answer, and no request sent', () => {
+    const stub = new FetchStub();
+    if (testCase.stubsGlobalFetch === true) vi.stubGlobal('fetch', stub.fetch);
+    const adapter = testCase.build(stub);
+    if (!declaresCapability(adapter, 'image-generation')) return;
+
+    const port = adapter as unknown as ImageGenerationPort;
+    const request = { size: { width: 768, height: 512 }, count: 2 };
+    expect(port.quoteImage(request)).toEqual(port.quoteImage(request));
+    // A guard that has to await a network call fails open when the network is down.
+    expect(stub.requests).toHaveLength(0);
+  });
+
+  it('either serves parts sheets completely or is invisible to the guard', () => {
+    const adapter = build();
+    const method = (adapter as unknown as Record<string, unknown>).generatePartsSheet;
+
+    if (method === undefined) {
+      expect(supportsPartsSheet(adapter)).toBe(false);
+      return;
+    }
+    // Having the method is not the claim; `servesPartsSheet` is, and the guard must
+    // agree with it in both directions.
+    expect(typeof method).toBe('function');
+    expect(supportsPartsSheet(adapter)).toBe(
+      (adapter as unknown as { servesPartsSheet: boolean }).servesPartsSheet,
+    );
+  });
+});
 
 describe('the contract suite itself', () => {
   it('covers every adapter this package ships', () => {

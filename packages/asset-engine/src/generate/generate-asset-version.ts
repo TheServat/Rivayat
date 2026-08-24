@@ -28,6 +28,7 @@ import {
   ProviderError,
   type Result,
   type Unit,
+  ValidationError,
   ZERO_USD,
   err,
   isErr,
@@ -52,10 +53,13 @@ import type {
 import type { BlobStore } from '@rv/asset-registry';
 import type {
   ImageArtifact,
+  ImageCostQuote,
   ImageGenerationPort,
   ImagePayload,
+  ImageResult,
   ProviderUsage,
 } from '@rv/providers';
+import { supportsPartsSheet } from '@rv/providers';
 
 import {
   type DecompositionPolicy,
@@ -127,6 +131,13 @@ export interface GenerateAssetVersionInput {
   /** The quality gate's repair channel. Appended verbatim to the prompt. */
   readonly repairClause?: string;
   /**
+   * The flat field this lane's prompts ask for, in words.
+   *
+   * Only reaches a provider on the parts-sheet path, where the graph has a slot for it.
+   * Its RGB twin travels separately to the matting stage.
+   */
+  readonly background?: string;
+  /**
    * Forces a generation past a cache hit.
    *
    * Deliberately a whole object rather than a boolean: `RegenerateIntent` carries the
@@ -169,6 +180,14 @@ export interface GeneratedOutcome {
    * the result metadata rather than inferred later from a drifting face.
    */
   readonly degraded: readonly string[];
+  /**
+   * What the guard was told this call would cost, before it was made.
+   *
+   * Kept beside `usage` so the projection and the invoice can be compared: a lane whose
+   * quotes are systematically below what it bills is a catalogue that has drifted, and
+   * nothing notices unless both numbers are recorded.
+   */
+  readonly quote: ImageCostQuote;
 }
 
 export type GenerateAssetVersionOutput = CacheHitOutcome | GeneratedOutcome;
@@ -219,25 +238,41 @@ export class GenerateAssetVersionUseCase {
       ...(input.extraReferences === undefined ? {} : { extraReferences: input.extraReferences }),
       ...(input.repairClause === undefined ? {} : { repairClause: input.repairClause }),
       ...(input.encoder === undefined ? {} : { encoder: input.encoder }),
+      ...(input.background === undefined ? {} : { background: input.background }),
     });
     if (isErr(composed)) return composed;
 
+    // The port's own quote, not the registry's flat-rate plan estimate: the plan is a
+    // per-asset budgeting heuristic, and what the guard has to see is what *this* model
+    // will charge for *this* size. `ImageGenerationPort.quoteImage` exists so that
+    // number is available before the call rather than on the receipt (CLAUDE.md #3).
+    const quote = this.#deps.images.quoteImage({ size: composed.value.size, count: 1 });
+    if (quote.kind === 'unpriced') {
+      // Refused rather than fallen back to the plan estimate. A model nobody has priced
+      // cannot be guarded, and a flat rate standing in for it is a guess the ledger
+      // would then record as fact. Adding the model to the catalogue is the fix.
+      return err(
+        new ValidationError({
+          message: 'refusing an image call that cannot be priced before it is made',
+          context: {
+            modelRef: quote.modelRef,
+            reason: quote.reason,
+            semanticKey: input.spec.semanticKey,
+          },
+        }),
+      );
+    }
+
     const guarded = this.#deps.budget.check({
       runId: input.runId,
-      projectedNanoUsd: resolution.estimatedCostNanoUsd as NanoUsd,
+      projectedNanoUsd: quote.nanoUsd,
     });
     if (isErr(guarded)) return guarded;
 
     const loaded = await this.#loadReferences(composed.value.references);
-
-    const generated = await this.#deps.images.generateImage({
-      prompt: composed.value.prompt,
-      negativePrompt: composed.value.negativePrompt,
-      size: composed.value.size,
-      seed: composed.value.seed,
-      count: 1,
-      references: loaded.payloads,
-    });
+    const drawn = await this.#draw(composed.value, loaded.payloads);
+    const generated = drawn.result;
+    if (drawn.degraded !== undefined) loaded.degraded.push(drawn.degraded);
 
     if (isErr(generated)) {
       this.#meter(input, failureUsage(), 'failure');
@@ -269,7 +304,58 @@ export class GenerateAssetVersionUseCase {
       request: composed.value,
       usage: generated.value.usage,
       degraded: loaded.degraded,
+      quote,
     });
+  }
+
+  /**
+   * Picks the port, which is the one routing decision this use-case makes.
+   *
+   * A `parts-sheet` route asks for a **layout**, and only a provider that has the
+   * parts-sheet graph can serve one. `supportsPartsSheet` is the declaration; a
+   * provider that does not serve it falls back to `generateImage` with the prose layout
+   * clause the composer put in `prompt` - which is a genuinely weaker request, so it is
+   * recorded in `degraded` rather than passed off as the same thing. RV-121 requires
+   * exactly that: what the run could not do that it was asked to do, in the result.
+   */
+  async #draw(
+    composed: ComposedRequest,
+    references: readonly ImagePayload[],
+  ): Promise<{ result: Result<ImageResult, AppError>; degraded?: string }> {
+    const port = this.#deps.images;
+    const slots = composed.partsSheet;
+
+    if (slots !== undefined && supportsPartsSheet(port)) {
+      return {
+        result: await port.generatePartsSheet({
+          subject: slots.subject,
+          parts: slots.parts,
+          style: slots.style,
+          background: slots.background,
+          grid: slots.grid,
+          negativePrompt: composed.negativePrompt,
+          size: composed.size,
+          seed: composed.seed,
+          count: 1,
+        }),
+      };
+    }
+
+    const result = await port.generateImage({
+      prompt: composed.prompt,
+      negativePrompt: composed.negativePrompt,
+      size: composed.size,
+      seed: composed.seed,
+      count: 1,
+      references,
+    });
+    return slots === undefined
+      ? { result }
+      : {
+          result,
+          degraded:
+            'no parts-sheet graph on this lane; the layout was asked for in prose, which a 77-token encoder dilutes',
+        };
   }
 
   /**

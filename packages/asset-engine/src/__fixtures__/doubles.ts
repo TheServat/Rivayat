@@ -47,9 +47,13 @@ import type {
   StoredAssetVersion,
 } from '@rv/asset-registry';
 import type {
+  ImageCostQuote,
+  ImageCostRequest,
   ImageGenerationPort,
   ImageGenerationRequest,
   ImageResult,
+  PartsSheetPort,
+  PartsSheetRequest,
   ProviderUsage,
   VisionScore,
   VisionScoringPort,
@@ -135,6 +139,26 @@ export class FakeImagePort implements ImageGenerationPort {
     return this.requests.length;
   }
 
+  /**
+   * Quotes whatever the test told it to, defaulting to free.
+   *
+   * Settable because "the guard refused an unpriced model" is a branch that only exists
+   * if a double can produce one.
+   */
+  quote: ImageCostQuote = {
+    kind: 'free',
+    modelRef: 'fake:image',
+    nanoUsd: ZERO_USD,
+    reason: 'a test double spends nothing',
+  };
+
+  quoteImage(request: ImageCostRequest): ImageCostQuote {
+    this.quotes.push(request);
+    return this.quote;
+  }
+
+  readonly quotes: ImageCostRequest[] = [];
+
   generateImage(request: ImageGenerationRequest): Promise<Result<ImageResult, AppError>> {
     this.requests.push(request);
     if (this.#failure !== null) return Promise.resolve(err(this.#failure));
@@ -157,6 +181,29 @@ export class FakeImagePort implements ImageGenerationPort {
               ],
       }),
     );
+  }
+}
+
+/**
+ * An image port that also serves the parts-sheet graph.
+ *
+ * Extends the plain fake rather than replacing it, because the property under test is
+ * that the *same* caller reaches a different method when - and only when - the port
+ * declares it. `servesPartsSheet` is settable so the "declared but not available"
+ * branch is reachable, which is the branch a deployment without the workflow file hits.
+ */
+export class FakePartsSheetPort extends FakeImagePort implements PartsSheetPort {
+  readonly sheetRequests: PartsSheetRequest[] = [];
+  servesPartsSheet = true;
+
+  generatePartsSheet(request: PartsSheetRequest): Promise<Result<ImageResult, AppError>> {
+    this.sheetRequests.push(request);
+    return this.generateImage({
+      prompt: request.subject,
+      ...(request.negativePrompt === undefined ? {} : { negativePrompt: request.negativePrompt }),
+      ...(request.size === undefined ? {} : { size: request.size }),
+      ...(request.seed === undefined ? {} : { seed: request.seed }),
+    });
   }
 }
 

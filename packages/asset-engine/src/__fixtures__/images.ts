@@ -64,6 +64,60 @@ export async function paintSheet(
   return { mimeType: 'image/png', data: new Uint8Array(data) };
 }
 
+/**
+ * A sheet whose field is *graded*, which is the case a key cannot cut.
+ *
+ * Not a hypothetical, and not an approximation either - these are the numbers measured
+ * off the take that failed: SD 1.5 drew `prop/lamp-cart/laden` on a studio backdrop
+ * whose top corners read `(128,110,91)` and whose bottom corners read `(249,244,239)`.
+ *
+ * The mechanism that defeats the key is worth stating exactly, because it is not the
+ * one the tolerances were designed against. `sampleBackground` takes the **median of
+ * the four corners**, and with the corners 120 levels apart the median is
+ * `(189,177,163)` - a colour that occurs nowhere in the picture. All four corners then
+ * sit ~13000 squared units from it, past tier 1's soft tolerance of 6348, so no border
+ * pixel ever enters the flood-fill queue and the matte removes nothing. Tier 2's wider
+ * 15552 does admit them, but only at partial alpha (~212), so the corners are still not
+ * transparent. Widening further starts eating the subject instead.
+ */
+export async function paintGradedSheet(
+  width: number,
+  height: number,
+  blobs: readonly Blob[],
+  ramp: { readonly top: number; readonly bottom: number } = { top: 128, bottom: 249 },
+): Promise<EncodedImage> {
+  const data = new Uint8Array(width * height * 4);
+  const span = Math.max(1, height - 1);
+
+  for (let y = 0; y < height; y += 1) {
+    const level = Math.round(ramp.top + ((ramp.bottom - ramp.top) * y) / span);
+    for (let x = 0; x < width; x += 1) {
+      const at = (y * width + x) * 4;
+      data[at] = level;
+      data[at + 1] = level;
+      data[at + 2] = level;
+      data[at + 3] = 255;
+    }
+  }
+
+  for (const blob of blobs) {
+    const colour = blob.color ?? { r: 20, g: 90, b: 40 };
+    for (let y = blob.y; y < Math.min(height, blob.y + blob.height); y += 1) {
+      for (let x = blob.x; x < Math.min(width, blob.x + blob.width); x += 1) {
+        const at = (y * width + x) * 4;
+        data[at] = colour.r;
+        data[at + 1] = colour.g;
+        data[at + 2] = colour.b;
+      }
+    }
+  }
+
+  const encoded = await sharp(Buffer.from(data), { raw: { width, height, channels: 4 } })
+    .png()
+    .toBuffer();
+  return { mimeType: 'image/png', data: new Uint8Array(encoded) };
+}
+
 /** The same, already matted: transparent field, opaque blobs. */
 export async function paintCutout(
   width: number,

@@ -8,7 +8,7 @@ import { specFor, testIds, threeBlobSpec } from '../__fixtures__/builders';
 import { paintCutout } from '../__fixtures__/images';
 import { PngRaster } from '../raster/png-raster';
 import { assignComponents, toPlanTargets } from './assign-components';
-import { extractComponent, findComponents } from './connected-components';
+import { SHEET_ALPHA_THRESHOLD, extractComponent, findComponents } from './connected-components';
 import { SplitPartsUseCase } from './split-parts';
 
 const raster = new PngRaster();
@@ -324,3 +324,63 @@ function fourPartSpec(): AssetSpec {
     ],
   });
 }
+
+describe('the keyed-sheet alpha threshold', () => {
+  /**
+   * Two separated blobs welded by a faint alpha bridge.
+   *
+   * This is what `ThresholdMatting` really leaves behind on a parts sheet: the field
+   * between two pieces lands between `tolerance` and `softTolerance` and comes out at
+   * alpha 25-191, which is invisible over any background and fully connective. Measured
+   * on the live `prop/lamp-cart/laden` take, 10.6 % of the canvas sat in that band and
+   * turned nine drawn pieces into one 677x466 component.
+   */
+  function weldedPair(bridgeAlpha: number): { width: number; height: number; data: Uint8Array } {
+    const width = 120;
+    const height = 40;
+    const data = new Uint8Array(width * height * 4);
+    const paint = (x0: number, x1: number, alpha: number): void => {
+      for (let y = 12; y < 28; y += 1) {
+        for (let x = x0; x < x1; x += 1) {
+          const at = (y * width + x) * 4;
+          data[at] = 40;
+          data[at + 1] = 120;
+          data[at + 2] = 90;
+          data[at + 3] = alpha;
+        }
+      }
+    };
+    paint(10, 45, 255);
+    paint(75, 110, 255);
+    paint(45, 75, bridgeAlpha);
+    return { width, height, data };
+  }
+
+  it('reads a faint bridge as background, where the default reads it as one part', () => {
+    const image = weldedPair(90);
+
+    // The default exists for a learned matte, whose soft edge *is* the silhouette.
+    expect(findComponents(image).components).toHaveLength(1);
+    // The sheet threshold sees the two pieces the model actually drew.
+    expect(
+      findComponents(image, { alphaThreshold: SHEET_ALPHA_THRESHOLD }).components,
+    ).toHaveLength(2);
+  });
+
+  it('still keeps a piece whose own edge is antialiased', () => {
+    // Only the interior has to clear the bar; a 1 px rim below it is not a part.
+    const image = weldedPair(0);
+    const components = findComponents(image, { alphaThreshold: SHEET_ALPHA_THRESHOLD }).components;
+
+    expect(components).toHaveLength(2);
+    for (const component of components) expect(component.pixelCount).toBeGreaterThan(400);
+  });
+
+  it('is a plateau, not a knife edge', () => {
+    // 160 was picked because the live sweep saturated there and stayed saturated to 224.
+    const image = weldedPair(90);
+    for (const threshold of [128, SHEET_ALPHA_THRESHOLD, 224]) {
+      expect(findComponents(image, { alphaThreshold: threshold }).components).toHaveLength(2);
+    }
+  });
+});

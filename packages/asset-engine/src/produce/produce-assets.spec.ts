@@ -39,6 +39,8 @@ import {
   ResolveAssetDemandUseCase,
 } from '@rv/asset-registry';
 import type {
+  ImageCostQuote,
+  ImageCostRequest,
   ImageGenerationPort,
   ImageGenerationRequest,
   ImageResult,
@@ -114,6 +116,17 @@ class ScriptedImages implements ImageGenerationPort {
   readonly requests: ImageGenerationRequest[] = [];
   maxInflight = 0;
   #inflight = 0;
+
+  /** The free local lane, which is what every produce test is standing in for. */
+  quoteImage(request: ImageCostRequest): ImageCostQuote {
+    void request;
+    return {
+      kind: 'free',
+      modelRef: 'comfyui:dreamshaper_8.safetensors',
+      nanoUsd: ZERO_USD,
+      reason: 'local inference on this machine, metered at zero',
+    };
+  }
 
   constructor(
     private readonly answer: (

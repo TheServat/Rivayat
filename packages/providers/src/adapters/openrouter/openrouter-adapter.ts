@@ -26,10 +26,12 @@ import {
 } from '@rv/shared-kernel';
 
 import { type FetchLike, JsonHttpClient } from '../../http/json-http';
-import { priceCall, pricingFor } from '../../cost/pricing';
+import { priceCall, pricingFor, quoteImageCall } from '../../cost/pricing';
 import { type ImageArtifact, type ImagePayload, toImageArtifact, usage } from '../../ports/common';
 import type { ImageEditPort, ImageEditRequest } from '../../ports/image-edit';
 import type {
+  ImageCostQuote,
+  ImageCostRequest,
   ImageGenerationPort,
   ImageGenerationRequest,
   ImageResult,
@@ -295,6 +297,19 @@ export class OpenRouterAdapter
     for (const reference of request.references ?? []) parts.push(imagePart(reference));
 
     return this.#imageCall(parts, request.size ?? null, request.seed, request.signal);
+  }
+
+  /**
+   * Priced from the catalogue entry this adapter was constructed with.
+   *
+   * Note what it does *not* do: a live `catalogue()` refresh does not feed back into
+   * the quote, because a guard that awaits a network call fails open when the network
+   * is down. A model whose price changed between construction and the call is quoted at
+   * the old rate and billed at the new one - which is why `CostMeter` prices the real
+   * usage afterwards rather than trusting this number.
+   */
+  quoteImage(request: ImageCostRequest): ImageCostQuote {
+    return quoteImageCall(this.modelRef, this.#pricing, request);
   }
 
   // ── image-edit ────────────────────────────────────────────────────────────

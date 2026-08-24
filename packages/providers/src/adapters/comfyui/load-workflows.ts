@@ -20,6 +20,18 @@ export const COMFY_WORKFLOW_FILES = {
   img2img: 'img2img-lcm-variant.json',
 } as const;
 
+/**
+ * Graphs whose absence is a reduced capability rather than a broken install.
+ *
+ * `txt2img-lcm-parts-sheet.json` is here because an adapter without it still generates
+ * images perfectly well - it just reports `servesPartsSheet: false` and the caller
+ * routes around it. Failing the whole load for a missing optional graph would take the
+ * free lane down entirely to protect one mode of it.
+ */
+export const COMFY_OPTIONAL_WORKFLOW_FILES = {
+  partsSheet: 'txt2img-lcm-parts-sheet.json',
+} as const;
+
 export async function loadComfyWorkflows(
   directory: string,
 ): Promise<Result<ComfyWorkflowSet, AppError>> {
@@ -40,5 +52,18 @@ export async function loadComfyWorkflows(
     }
   }
 
-  return ok({ txt2img: loaded.txt2img, img2img: loaded.img2img });
+  const optional: Record<string, unknown> = {};
+  for (const [key, filename] of Object.entries(COMFY_OPTIONAL_WORKFLOW_FILES)) {
+    try {
+      optional[key] = JSON.parse(await readFile(join(directory, filename), 'utf8')) as unknown;
+    } catch {
+      // Left out of the set entirely, so `partsSheet !== undefined` is the whole test.
+    }
+  }
+
+  return ok({
+    txt2img: loaded.txt2img,
+    img2img: loaded.img2img,
+    ...(optional.partsSheet === undefined ? {} : { partsSheet: optional.partsSheet }),
+  });
 }

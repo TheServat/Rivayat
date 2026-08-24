@@ -17,11 +17,15 @@ export type {
   TextGenerationRequest,
   TextGenerationResult,
   TextGenerationPort,
+  ImageCostQuote,
+  ImageCostRequest,
   ImageGenerationRequest,
   ImageResult,
   ImageGenerationPort,
   ImageEditRequest,
   ImageEditPort,
+  PartsSheetRequest,
+  PartsSheetPort,
   VisionRubricCriterion,
   VisionScoringRequest,
   VisionScore,
@@ -39,6 +43,8 @@ export {
   NO_TOKENS,
   NO_IMAGES,
   declaresCapability,
+  projectedNanoUsd,
+  supportsPartsSheet,
   VisionScoreSheet,
   buildRubricPrompt,
   parseScoreSheet,
@@ -58,6 +64,7 @@ export {
   OllamaAdapter,
   OLLAMA_CAPABILITIES,
   OLLAMA_DEFAULT_BASE_URL,
+  OLLAMA_RECOMMENDED_VISION_MODEL,
 } from './adapters/ollama/ollama-adapter';
 
 export type {
@@ -92,11 +99,16 @@ export {
   COMFYUI_DEFAULTS,
   COMFYUI_DEFAULT_BASE_URL,
   COMFYUI_MAX_DIMENSION,
+  COMFYUI_PARTS_SHEET_DEFAULTS,
   COMFYUI_RECOMMENDED_DIMENSION,
 } from './adapters/comfyui/comfyui-adapter';
 export type { BuiltGraph, PlaceholderValues } from './adapters/comfyui/workflow';
 export { buildGraph, NUMERIC_PLACEHOLDERS } from './adapters/comfyui/workflow';
-export { COMFY_WORKFLOW_FILES, loadComfyWorkflows } from './adapters/comfyui/load-workflows';
+export {
+  COMFY_OPTIONAL_WORKFLOW_FILES,
+  COMFY_WORKFLOW_FILES,
+  loadComfyWorkflows,
+} from './adapters/comfyui/load-workflows';
 
 // ── routing ─────────────────────────────────────────────────────────────────
 export type {
@@ -121,6 +133,7 @@ export {
   findModelDescriptor,
   pricingFor,
   priceCall,
+  quoteImageCall,
 } from './cost/pricing';
 export type { RecordCallInput, CostMeterDeps, SpendReader } from './cost/cost-meter';
 export { CostMeter } from './cost/cost-meter';

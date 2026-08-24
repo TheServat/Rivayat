@@ -18,9 +18,19 @@ export type {
   TextGenerationPort,
 } from './text-generation';
 
-export type { ImageGenerationRequest, ImageResult, ImageGenerationPort } from './image-generation';
+export type {
+  ImageCostQuote,
+  ImageCostRequest,
+  ImageGenerationRequest,
+  ImageGenerationPort,
+  ImageResult,
+} from './image-generation';
+export { projectedNanoUsd } from './image-generation';
 
 export type { ImageEditRequest, ImageEditPort } from './image-edit';
+
+export type { PartsSheetRequest, PartsSheetPort } from './parts-sheet';
+export { supportsPartsSheet } from './parts-sheet';
 
 export type {
   VisionRubricCriterion,

@@ -14,6 +14,7 @@
 import {
   KNOWN_MODELS,
   type ModelDescriptor,
+  type ModelRef,
   type Pricing,
   type ProviderKind,
   type Size,
@@ -21,6 +22,7 @@ import {
 import { ZERO_USD, type NanoUsd, nanoUsd, priceFor } from '@rv/shared-kernel';
 
 import type { ProviderUsage } from '../ports/common';
+import type { ImageCostQuote, ImageCostRequest } from '../ports/image-generation';
 
 /**
  * Image-output tokens billed for one ~1024px image.
@@ -111,4 +113,57 @@ export function priceCall(pricing: Pricing, consumed: ProviderUsage): NanoUsd {
   }
 
   return nanoUsd(total);
+}
+
+/**
+ * The pre-call twin of {@link priceCall}, for one image request.
+ *
+ * Shared by every priced image adapter so the estimate and the invoice are computed by
+ * the same two functions over the same `Pricing` record. An adapter that built its own
+ * estimate would be free to be optimistic, and nothing would ever compare the two.
+ *
+ * `approxPerImageUsd` is preferred when the catalogue has one, because it is the figure
+ * the provider published; the token estimate is the fallback and says so in `basis`, so
+ * a ledger row derived from a guess is distinguishable from one derived from a quote.
+ */
+export function quoteImageCall(
+  ref: ModelRef,
+  pricing: Pricing,
+  request: ImageCostRequest,
+): ImageCostQuote {
+  const count = request.count ?? 1;
+
+  if (pricing.free) {
+    return {
+      kind: 'free',
+      modelRef: ref,
+      nanoUsd: ZERO_USD,
+      reason: pricing.note ?? 'the catalogue lists this model as free',
+    };
+  }
+
+  if (pricing.approxPerImageUsd !== null) {
+    return {
+      kind: 'estimated',
+      modelRef: ref,
+      nanoUsd: nanoUsd(priceFor(Number.parseFloat(pricing.approxPerImageUsd), count)),
+      basis: `${String(count)} x the catalogue's published $${pricing.approxPerImageUsd}/image`,
+    };
+  }
+
+  if (pricing.imageOutputPerMTokensUsd !== null) {
+    const tokens = estimateImageOutputTokens(request.size ?? null, count);
+    return {
+      kind: 'estimated',
+      modelRef: ref,
+      nanoUsd: nanoUsd(priceFor(perUnit(pricing.imageOutputPerMTokensUsd), tokens)),
+      basis: `${String(tokens)} image-output tokens at $${pricing.imageOutputPerMTokensUsd}/1M, scaled by area from ${String(IMAGE_OUTPUT_TOKENS_PER_1K_IMAGE)} per 1K image`,
+    };
+  }
+
+  return {
+    kind: 'unpriced',
+    modelRef: ref,
+    reason: pricing.note ?? 'the catalogue has no image rate for this model',
+  };
 }

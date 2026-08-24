@@ -60,6 +60,17 @@ export interface LaneBinding {
    */
   readonly backgroundHint?: { readonly r: number; readonly g: number; readonly b: number };
   /**
+   * The same field, in the words the generator is asked for it in.
+   *
+   * The other half of `backgroundHint`, and only useful on a lane whose graph has a
+   * slot for it - a parts-sheet lane. Kept as two fields rather than one derived from
+   * the other because "flat neutral light grey" and `{r,g,b}` are not convertible in
+   * either direction without inventing a colour name or a hex the model never saw, and
+   * an approximate conversion is precisely how a key ends up 12 levels off the field it
+   * is supposed to remove.
+   */
+  readonly backgroundPrompt?: string;
+  /**
    * The text encoder behind this lane. Defaults to `long`.
    *
    * SD 1.5 is `clip-77`; a Gemini or FLUX lane is `long`. Declared on the binding

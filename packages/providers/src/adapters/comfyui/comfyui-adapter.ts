@@ -29,6 +29,8 @@ import {
   SystemClock,
   TimeoutError,
   UnsupportedCapabilityError,
+  ValidationError,
+  ZERO_USD,
   err,
   isErr,
   ok,
@@ -38,10 +40,13 @@ import { type FetchLike, JsonHttpClient } from '../../http/json-http';
 import { type ImageArtifact, toImageArtifact } from '../../ports/common';
 import type { ImageEditPort, ImageEditRequest } from '../../ports/image-edit';
 import type {
+  ImageCostQuote,
+  ImageCostRequest,
   ImageGenerationPort,
   ImageGenerationRequest,
   ImageResult,
 } from '../../ports/image-generation';
+import type { PartsSheetPort, PartsSheetRequest } from '../../ports/parts-sheet';
 import type { ProviderAdapter } from '../../ports/provider-adapter';
 import { elapsedSince } from '../shared';
 import { type PlaceholderValues, buildGraph } from './workflow';
@@ -63,12 +68,20 @@ export const COMFYUI_MAX_DIMENSION = 1024;
 /** The ceiling worth staying under. 3.25 s/image at 768² with 1.3 GB headroom. */
 export const COMFYUI_RECOMMENDED_DIMENSION = 768;
 
-/** The two graphs in `tools/comfy-workflows/`, already parsed. */
+/** The graphs in `tools/comfy-workflows/`, already parsed. */
 export interface ComfyWorkflowSet {
   /** `txt2img-lcm-draft.json` */
   readonly txt2img: unknown;
   /** `img2img-lcm-variant.json` */
   readonly img2img: unknown;
+  /**
+   * `txt2img-lcm-parts-sheet.json`, when the deployment has it.
+   *
+   * Optional because it is the one graph an adapter can legitimately be built without,
+   * and the honest consequence is a `servesPartsSheet` of `false` rather than a crash
+   * at the first prop. See {@link PartsSheetPort}.
+   */
+  readonly partsSheet?: unknown;
 }
 
 /**
@@ -96,6 +109,20 @@ export const COMFYUI_DEFAULTS: PlaceholderValues = {
   filename_prefix: 'rivayat',
 };
 
+/**
+ * What the parts-sheet graph wants instead, from `txt2img-lcm-parts-sheet.md`.
+ *
+ * Both numbers were measured on the real graph, not reasoned about: at 6 steps and
+ * cfg 1.5 - the values that produce a clean single subject - the sheet resolves into
+ * one assembled object, because the layout scaffold is the part of the prompt that
+ * needs the extra adherence. 8 steps and cfg 1.8 is the pairing that produced the
+ * verified six-component satchel sheet in 3.4 s at 768x512.
+ */
+export const COMFYUI_PARTS_SHEET_DEFAULTS: PlaceholderValues = {
+  steps: 8,
+  cfg: 1.8,
+};
+
 export interface ComfyUiAdapterOptions {
   readonly workflows: ComfyWorkflowSet;
   readonly baseUrl?: string;
@@ -103,6 +130,15 @@ export interface ComfyUiAdapterOptions {
   readonly clock?: Clock;
   /** Overrides any of `COMFYUI_DEFAULTS` - a different checkpoint, more steps. */
   readonly defaults?: PlaceholderValues;
+  /**
+   * Applied over `defaults` for the parts-sheet graph only.
+   *
+   * Defaults to {@link COMFYUI_PARTS_SHEET_DEFAULTS}. Separate from `defaults` because
+   * a sheet is not a harder version of a draft - it has six independent structures to
+   * resolve instead of one, and the settings that make a single subject crisp make a
+   * sheet collapse into one assembled object.
+   */
+  readonly partsSheetDefaults?: PlaceholderValues;
   readonly capabilities?: readonly Capability[];
   /** How long to wait for a queued prompt. 512² takes ~1.4 s; a cold checkpoint adds ~10 s. */
   readonly generationTimeoutMs?: number;
@@ -116,15 +152,20 @@ export interface ComfyUiAdapterOptions {
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
 
-export class ComfyUiAdapter implements ProviderAdapter, ImageGenerationPort, ImageEditPort {
+export class ComfyUiAdapter
+  implements ProviderAdapter, ImageGenerationPort, ImageEditPort, PartsSheetPort
+{
   readonly kind: ProviderKind = 'comfyui';
   readonly modelRef: string;
   readonly capabilities: readonly Capability[];
+  /** True when this instance was handed `txt2img-lcm-parts-sheet.json`. */
+  readonly servesPartsSheet: boolean;
 
   readonly #http: JsonHttpClient;
   readonly #clock: Clock;
   readonly #workflows: ComfyWorkflowSet;
   readonly #defaults: PlaceholderValues;
+  readonly #partsSheetDefaults: PlaceholderValues;
   readonly #timeoutMs: number;
   readonly #pollIntervalMs: number;
   readonly #sleep: (ms: number) => Promise<void>;
@@ -137,7 +178,9 @@ export class ComfyUiAdapter implements ProviderAdapter, ImageGenerationPort, Ima
     this.modelRef = modelRef('comfyui', checkpoint);
     this.capabilities = options.capabilities ?? COMFYUI_CAPABILITIES;
     this.#workflows = options.workflows;
+    this.servesPartsSheet = options.workflows.partsSheet !== undefined;
     this.#defaults = { ...COMFYUI_DEFAULTS, ...options.defaults };
+    this.#partsSheetDefaults = options.partsSheetDefaults ?? COMFYUI_PARTS_SHEET_DEFAULTS;
     this.#clock = options.clock ?? new SystemClock();
     this.#timeoutMs = options.generationTimeoutMs ?? DEFAULT_GENERATION_TIMEOUT_MS;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -185,6 +228,89 @@ export class ComfyUiAdapter implements ProviderAdapter, ImageGenerationPort, Ima
       request.seed ?? Number(this.#defaults.seed),
       request.signal,
     );
+  }
+
+  /**
+   * The separability lane: `txt2img-lcm-parts-sheet.json`.
+   *
+   * The graph owns the layout scaffold and the separability negatives - "the individual
+   * separate pieces laid out apart from each other", "no two components touching",
+   * "single assembled figure" in the negative - and this method owns only the five
+   * slots it leaves open. That split is why the workflow file is the contract: changing
+   * the scaffold changes what a parts sheet *means*, and no caller can do it by
+   * accident through a prompt.
+   *
+   * Refuses rather than substitutes when the graph is absent. A caller that quietly got
+   * `generateImage` here would receive one assembled illustration and hand it to a
+   * splitter that finds a single component - which is exactly the failure the parts
+   * sheet exists to avoid, arriving without a message.
+   */
+  async generatePartsSheet(request: PartsSheetRequest): Promise<Result<ImageResult, AppError>> {
+    const workflow = this.#workflows.partsSheet;
+    if (workflow === undefined) {
+      return err(
+        new UnsupportedCapabilityError(
+          'comfyui',
+          'parts-sheet generation - this adapter was built without txt2img-lcm-parts-sheet.json; check servesPartsSheet before calling, and fall back to generateImage',
+        ),
+      );
+    }
+
+    if (request.parts.length === 0) {
+      return err(
+        new ValidationError({
+          message: 'a parts sheet needs at least one named component',
+          context: { subject: request.subject },
+        }),
+      );
+    }
+
+    const size = request.size ?? {
+      width: Number(this.#defaults.width),
+      height: Number(this.#defaults.height),
+    };
+    const ceiling = this.#checkCeiling(size);
+    if (ceiling !== undefined) return err(ceiling);
+
+    const seed = request.seed ?? Number(this.#defaults.seed);
+    return this.#run(
+      workflow,
+      {
+        ...this.#partsSheetDefaults,
+        prompt: request.subject,
+        parts: request.parts.join(', '),
+        style: request.style,
+        background: request.background,
+        grid_cols: request.grid.cols,
+        grid_rows: request.grid.rows,
+        ...(request.negativePrompt === undefined ? {} : { negative: request.negativePrompt }),
+        width: size.width,
+        height: size.height,
+        seed,
+        batch_size: request.count ?? Number(this.#defaults.batch_size),
+      },
+      size,
+      seed,
+      request.signal,
+    );
+  }
+
+  /**
+   * Free, and that is a measurement rather than a missing price.
+   *
+   * The electricity is real and the GPU-seconds are real; what is zero is the *metered*
+   * cost, which is the only quantity a budget policy denominated in dollars can act on.
+   * Reporting `unpriced` here would make a free-lane run refuse to start under a strict
+   * policy, which is exactly backwards.
+   */
+  quoteImage(request: ImageCostRequest): ImageCostQuote {
+    void request;
+    return {
+      kind: 'free',
+      modelRef: this.modelRef,
+      nanoUsd: ZERO_USD,
+      reason: 'local inference on this machine, metered at zero',
+    };
   }
 
   async editImage(request: ImageEditRequest): Promise<Result<ImageResult, AppError>> {

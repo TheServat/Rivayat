@@ -5,6 +5,7 @@ import {
   ProviderError,
   isErr,
   isOk,
+  nanoUsd,
   unwrap,
 } from '@rv/shared-kernel';
 import type { AssetDemandPlan, AssetId, AssetKey, AssetVersionId, RunId } from '@rv/contracts';
@@ -12,6 +13,7 @@ import type { AssetDemandPlan, AssetId, AssetKey, AssetVersionId, RunId } from '
 import {
   FakeBudget,
   FakeImagePort,
+  FakePartsSheetPort,
   FakeResolver,
   InMemoryBlobStore,
 } from '../__fixtures__/doubles';
@@ -137,8 +139,7 @@ describe('GenerateAssetVersionUseCase', () => {
 
     expect(result.outcome).toBe('generated');
     if (result.outcome !== 'generated') return;
-    expect(result.degraded).toHaveLength(1);
-    expect(result.degraded[0]).toContain('identity-anchor');
+    expect(result.degraded.filter((entry) => entry.includes('identity-anchor'))).toHaveLength(1);
   });
 
   it('passes references it can load through to the provider', async () => {
@@ -258,5 +259,177 @@ describe('GenerateAssetVersionUseCase', () => {
       variantKey: 'winter',
     });
     expect(resolver.calls[0]?.styleChecksum).toBe(styleBible().checksum);
+  });
+});
+
+describe('GenerateAssetVersionUseCase, parts-sheet routing', () => {
+  function sheetHarness(port: FakeImagePort): GenerateAssetVersionUseCase {
+    return new GenerateAssetVersionUseCase({
+      resolver: new FakeResolver(),
+      budget: new FakeBudget(),
+      images: port,
+      blobs: new InMemoryBlobStore(),
+    });
+  }
+
+  it('sends the slots to a port that serves parts sheets, and never the prose prompt', async () => {
+    const port = new FakePartsSheetPort();
+    const result = unwrap(
+      await sheetHarness(port).execute({
+        spec: threeBlobSpec(),
+        style: styleBible(),
+        runId: RUN_ID,
+        background: 'flat solid cream',
+      }),
+    );
+
+    expect(port.sheetRequests).toHaveLength(1);
+    const sheet = port.sheetRequests[0];
+    expect(sheet?.parts).toEqual(['base', 'segment-1', 'segment-2']);
+    expect(sheet?.background).toBe('flat solid cream');
+    // Three parts: two columns, two rows. Advisory, and still the number the graph gets.
+    expect(sheet?.grid).toEqual({ cols: 2, rows: 2 });
+    expect(sheet?.subject).toBe('A dented brass lantern in three pieces.');
+    // The prose layout clause exists for the fallback path and must not be duplicated
+    // into the slot request, where the workflow already owns it.
+    expect(sheet?.subject).not.toContain('parts sheet');
+    expect(result.outcome).toBe('generated');
+    if (result.outcome === 'generated') expect(result.degraded).toEqual([]);
+  });
+
+  it('falls back to generateImage and says so when the port cannot serve a sheet', async () => {
+    const port = new FakeImagePort();
+    const result = unwrap(
+      await sheetHarness(port).execute({
+        spec: threeBlobSpec(),
+        style: styleBible(),
+        runId: RUN_ID,
+      }),
+    );
+
+    expect(port.requests[0]?.prompt).toContain('parts sheet');
+    expect(result.outcome).toBe('generated');
+    if (result.outcome !== 'generated') return;
+    expect(result.degraded.filter((entry) => entry.includes('parts-sheet graph'))).toHaveLength(1);
+  });
+
+  it('treats a declared-but-unavailable graph as no graph at all', async () => {
+    const port = new FakePartsSheetPort();
+    port.servesPartsSheet = false;
+
+    const result = unwrap(
+      await sheetHarness(port).execute({
+        spec: threeBlobSpec(),
+        style: styleBible(),
+        runId: RUN_ID,
+      }),
+    );
+
+    expect(port.sheetRequests).toHaveLength(0);
+    expect(port.requests).toHaveLength(1);
+    if (result.outcome === 'generated') {
+      expect(result.degraded.filter((entry) => entry.includes('parts-sheet graph'))).toHaveLength(
+        1,
+      );
+    }
+  });
+
+  it('leaves a single-part spec on the ordinary image path', async () => {
+    const port = new FakePartsSheetPort();
+    const spec = threeBlobSpec({
+      parts: [
+        {
+          name: 'body',
+          role: 'body',
+          description: 'the whole thing',
+          zOrder: 0,
+          attachHint: { x: 0.5, y: 0.5 },
+          deformable: false,
+          optional: false,
+        },
+      ],
+    });
+
+    const result = unwrap(
+      await sheetHarness(port).execute({ spec, style: styleBible(), runId: RUN_ID }),
+    );
+
+    expect(port.sheetRequests).toHaveLength(0);
+    expect(port.requests).toHaveLength(1);
+    // Routing around the sheet was the policy's decision, not a missing capability, so
+    // nothing is degraded.
+    if (result.outcome === 'generated') expect(result.degraded).toEqual([]);
+  });
+});
+
+describe('GenerateAssetVersionUseCase, pricing before spending', () => {
+  it('guards against the port quote rather than the plan flat rate', async () => {
+    const { useCase, images, budget } = harness();
+    images.quote = {
+      kind: 'estimated',
+      modelRef: 'openrouter:google/gemini-3.1-flash-lite-image',
+      nanoUsd: nanoUsd(33_600_000),
+      basis: 'test',
+    };
+
+    await useCase.execute({ spec: threeBlobSpec(), style: styleBible(), runId: RUN_ID });
+
+    expect(images.quotes).toHaveLength(1);
+    // The canvas the composer chose, so the quote is for the picture actually ordered.
+    expect(images.quotes[0]?.size).toEqual(threeBlobSpec().canvas);
+    expect(budget.checks).toEqual([33_600_000]);
+  });
+
+  it('asks for the price before it makes the call, not after', async () => {
+    const { useCase, images } = harness();
+    const order: string[] = [];
+    const realQuote = images.quoteImage.bind(images);
+    images.quoteImage = (request) => {
+      order.push('quote');
+      return realQuote(request);
+    };
+    const realGenerate = images.generateImage.bind(images);
+    images.generateImage = async (request) => {
+      order.push('generate');
+      return realGenerate(request);
+    };
+
+    await useCase.execute({ spec: threeBlobSpec(), style: styleBible(), runId: RUN_ID });
+
+    expect(order).toEqual(['quote', 'generate']);
+  });
+
+  it('refuses an unpriceable model rather than guessing, and spends nothing', async () => {
+    const { useCase, images, budget } = harness();
+    images.quote = {
+      kind: 'unpriced',
+      modelRef: 'openrouter:brand-new/model',
+      reason: 'the catalogue has no image rate for this model',
+    };
+
+    const outcome = await useCase.execute({
+      spec: threeBlobSpec(),
+      style: styleBible(),
+      runId: RUN_ID,
+    });
+
+    expect(isErr(outcome)).toBe(true);
+    if (isErr(outcome)) expect(outcome.error.kind).toBe('validation');
+    // The guard cannot run, so the call must not happen - and the guard is not asked
+    // to rule on a number nobody has.
+    expect(images.callCount).toBe(0);
+    expect(budget.checks).toHaveLength(0);
+  });
+
+  it('records the quote beside the usage so projection and invoice can be compared', async () => {
+    const { useCase } = harness();
+    const result = unwrap(
+      await useCase.execute({ spec: threeBlobSpec(), style: styleBible(), runId: RUN_ID }),
+    );
+
+    expect(result.outcome).toBe('generated');
+    if (result.outcome !== 'generated') return;
+    expect(result.quote.kind).toBe('free');
+    expect(result.quote.modelRef).toBe('fake:image');
   });
 });

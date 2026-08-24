@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { isErr, isOk, millis } from '@rv/shared-kernel';
+import { ZERO_USD, isErr, isOk, millis } from '@rv/shared-kernel';
+
+import { supportsPartsSheet } from '../../ports/parts-sheet';
 
 import { FetchStub } from '../../__fixtures__/fetch-stub';
 import {
@@ -14,16 +16,36 @@ import {
   COMFYUI_CAPABILITIES,
   COMFYUI_DEFAULT_BASE_URL,
   COMFYUI_MAX_DIMENSION,
+  COMFYUI_PARTS_SHEET_DEFAULTS,
   ComfyUiAdapter,
   type ComfyWorkflowSet,
 } from './comfyui-adapter';
-import { COMFY_WORKFLOW_FILES, loadComfyWorkflows } from './load-workflows';
+import {
+  COMFY_OPTIONAL_WORKFLOW_FILES,
+  COMFY_WORKFLOW_FILES,
+  loadComfyWorkflows,
+} from './load-workflows';
 import { WORKFLOW_DIR } from './__fixtures__/workflows';
 
 const workflows: ComfyWorkflowSet = {
   txt2img: readWorkflow(COMFY_WORKFLOW_FILES.txt2img),
   img2img: readWorkflow(COMFY_WORKFLOW_FILES.img2img),
+  partsSheet: readWorkflow(COMFY_OPTIONAL_WORKFLOW_FILES.partsSheet),
 };
+
+/** A deployment that never got the optional graph. */
+const withoutSheet: ComfyWorkflowSet = {
+  txt2img: workflows.txt2img,
+  img2img: workflows.img2img,
+};
+
+const SHEET = {
+  subject: 'a two-wheeled wooden handcart',
+  parts: ['cart frame', 'oil-can load', 'front wheel', 'rear wheel'],
+  style: 'flat vector illustration, muted earth palette',
+  background: 'flat neutral light grey',
+  grid: { cols: 2, rows: 2 },
+} as const;
 
 function happyStub(marker = 1): FetchStub {
   return new FetchStub()
@@ -389,6 +411,105 @@ describe('ComfyUiAdapter failure paths', () => {
   });
 });
 
+describe('ComfyUiAdapter.generatePartsSheet', () => {
+  it('fills every slot of the parts-sheet graph, and keeps the ints as ints', async () => {
+    const stub = happyStub();
+    const outcome = await adapterWith(stub).generatePartsSheet({
+      ...SHEET,
+      negativePrompt: 'blurry',
+      size: { width: 768, height: 512 },
+      seed: 7,
+    });
+
+    expect(isOk(outcome)).toBe(true);
+    const graph = (
+      stub.requestsFor('/prompt')[0]?.json as {
+        prompt: Record<string, { inputs: Record<string, unknown> }>;
+      }
+    ).prompt;
+    const positive = String(graph['4']?.inputs.text);
+
+    // The scaffold is the workflow's, and it survives - a caller cannot prompt it away.
+    expect(positive).toContain('exploded view item sheet');
+    expect(positive).toContain('a two-wheeled wooden handcart');
+    expect(positive).toContain('cart frame, oil-can load, front wheel, rear wheel');
+    expect(positive).toContain('flat neutral light grey background');
+    expect(positive).toContain('2 by 2 grid');
+    // The caller's negative is prepended to the fixed separability tail, not replacing it.
+    expect(String(graph['5']?.inputs.text)).toMatch(/^blurry, .*single assembled figure/);
+    expect(graph['6']?.inputs.width).toBe(768);
+    expect(graph['7']?.inputs.seed).toBe(7);
+    expect(graph['7']?.inputs.steps).toBe(COMFYUI_PARTS_SHEET_DEFAULTS.steps);
+    expect(graph['7']?.inputs.cfg).toBe(COMFYUI_PARTS_SHEET_DEFAULTS.cfg);
+  });
+
+  it('leaves no placeholder behind - the graph is POSTed or nothing is', async () => {
+    const stub = happyStub();
+    await adapterWith(stub).generatePartsSheet(SHEET);
+    expect(JSON.stringify(stub.requestsFor('/prompt')[0]?.json)).not.toContain('{{');
+  });
+
+  it('declares itself unable, and refuses, when the graph was never loaded', async () => {
+    const stub = happyStub();
+    const adapter = adapterWith(stub, { workflows: withoutSheet });
+
+    expect(adapter.servesPartsSheet).toBe(false);
+    expect(supportsPartsSheet(adapter)).toBe(false);
+
+    const outcome = await adapter.generatePartsSheet(SHEET);
+    expect(isErr(outcome)).toBe(true);
+    if (isErr(outcome)) expect(outcome.error.code).toBe('UNSUPPORTED_CAPABILITY');
+    // Refused before anything was queued.
+    expect(stub.requests).toHaveLength(0);
+  });
+
+  it('refuses a sheet with no components rather than asking for an empty grid', async () => {
+    const stub = happyStub();
+    const outcome = await adapterWith(stub).generatePartsSheet({ ...SHEET, parts: [] });
+
+    expect(isErr(outcome)).toBe(true);
+    if (isErr(outcome)) expect(outcome.error.kind).toBe('validation');
+    expect(stub.requests).toHaveLength(0);
+  });
+
+  it('applies the same 1024px ceiling as an ordinary generation', async () => {
+    const stub = happyStub();
+    const outcome = await adapterWith(stub).generatePartsSheet({
+      ...SHEET,
+      size: { width: COMFYUI_MAX_DIMENSION + 256, height: 512 },
+    });
+
+    expect(isErr(outcome)).toBe(true);
+    if (isErr(outcome)) expect(outcome.error.code).toBe('UNSUPPORTED_CAPABILITY');
+  });
+
+  it('is recognised by the guard when the graph is present', () => {
+    const adapter = adapterWith(new FetchStub());
+    expect(adapter.servesPartsSheet).toBe(true);
+    expect(supportsPartsSheet(adapter)).toBe(true);
+  });
+});
+
+describe('ComfyUiAdapter.quoteImage', () => {
+  it('quotes free, because local inference has no metered cost', () => {
+    const quote = adapterWith(new FetchStub()).quoteImage({
+      size: { width: 1024, height: 1024 },
+    });
+
+    expect(quote.kind).toBe('free');
+    if (quote.kind !== 'free') return;
+    expect(quote.nanoUsd).toBe(ZERO_USD);
+    expect(quote.modelRef).toBe('comfyui:dreamshaper_8.safetensors');
+  });
+
+  it('does not vary with size or count - the answer is a fact, not an estimate', () => {
+    const adapter = adapterWith(new FetchStub());
+    expect(adapter.quoteImage({ size: { width: 512, height: 512 } })).toEqual(
+      adapter.quoteImage({ size: { width: 1024, height: 1024 }, count: 4 }),
+    );
+  });
+});
+
 describe('loadComfyWorkflows', () => {
   it('reads both graphs from tools/comfy-workflows', async () => {
     const outcome = await loadComfyWorkflows(WORKFLOW_DIR);
@@ -403,5 +524,11 @@ describe('loadComfyWorkflows', () => {
     const outcome = await loadComfyWorkflows('/definitely/not/here');
     expect(isErr(outcome)).toBe(true);
     if (isErr(outcome)) expect(outcome.error.kind).toBe('validation');
+  });
+
+  it('picks the optional parts-sheet graph up when it is there', async () => {
+    const outcome = await loadComfyWorkflows(WORKFLOW_DIR);
+    expect(isOk(outcome)).toBe(true);
+    if (isOk(outcome)) expect(outcome.value.partsSheet).toBeTypeOf('object');
   });
 });

@@ -49,6 +49,26 @@ export const ollama = {
     };
   },
 
+  /**
+   * The recorded shape of a `format`-constrained call to a thinking vision model.
+   *
+   * Captured verbatim from Ollama 0.32.15 + `qwen3-vl:2b` on 2026-08-23: `content` is
+   * the empty string and the schema-conforming JSON is on `thinking`, with `think:
+   * false` on the request. Not hypothetical - this is what stopped every small vision
+   * model from serving the quality gate.
+   */
+  thinkingChat(thinking: string): Record<string, unknown> {
+    return {
+      model: 'qwen3-vl:2b',
+      created_at: '2026-08-23T19:07:14.190765900Z',
+      message: { role: 'assistant', content: '', thinking },
+      done_reason: 'stop',
+      done: true,
+      prompt_eval_count: 1120,
+      eval_count: 66,
+    };
+  },
+
   /** `POST /api/embed`. Two 4-dimensional vectors; real ones are 768-4096. */
   embed: {
     model: 'qwen3:1.7b',

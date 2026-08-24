@@ -261,6 +261,25 @@ describe('OllamaAdapter.score', () => {
     expect(isErr(outcome)).toBe(true);
   });
 
+  it('reads the answer off `thinking` when a format call left `content` empty', async () => {
+    // Ollama 0.32.15 + qwen3-vl:2b, `think: false`, `format` set: the whole valid score
+    // sheet arrives on `message.thinking` and `message.content` is "". Reading only
+    // `content` reported "model returned no content" for a model that answered
+    // perfectly, which is what made every small vision model look unusable.
+    const sheet = JSON.stringify({
+      scores: [{ key: 'style-match', score: 0, reason: 'four photographs, not paper cutout' }],
+    });
+    const stub = new FetchStub().on('/api/chat', { json: fixture.thinkingChat(sheet) });
+
+    const outcome = await adapterWith(stub).score({
+      image: { mimeType: 'image/png', data: new Uint8Array([9]) },
+      rubric: [rubric[0]!],
+    });
+
+    expect(isOk(outcome)).toBe(true);
+    if (isOk(outcome)) expect(outcome.value.scores[0]?.score).toBe(0);
+  });
+
   it('fails on JSON that violates the score sheet', async () => {
     const bad = JSON.stringify({ scores: [{ key: 'style-match', score: 5, reason: 'ok' }] });
     const stub = new FetchStub().on('/api/chat', { json: fixture.chat(bad) });
@@ -271,6 +290,50 @@ describe('OllamaAdapter.score', () => {
 
     expect(isErr(outcome)).toBe(true);
     if (isErr(outcome)) expect(outcome.error.kind).toBe('validation');
+  });
+});
+
+describe('OllamaAdapter and the thinking channel', () => {
+  it('uses `thinking` for a schema-constrained completion', async () => {
+    const stub = new FetchStub().on('/api/chat', {
+      json: fixture.thinkingChat('{"answer":"yes"}'),
+    });
+
+    const outcome = await adapterWith(stub).complete({
+      messages: [{ role: 'user', content: 'q' }],
+      jsonSchema: { type: 'object' },
+    });
+
+    expect(isOk(outcome)).toBe(true);
+    if (isOk(outcome)) expect(outcome.value.text).toBe('{"answer":"yes"}');
+  });
+
+  it('does not use `thinking` for a plain completion', async () => {
+    // Without a schema the two channels mean what they say, and handing a caller who
+    // asked for prose the model's reasoning instead is a different bug.
+    const stub = new FetchStub().on('/api/chat', {
+      json: fixture.thinkingChat('let me think about this'),
+    });
+
+    const outcome = await adapterWith(stub).complete({
+      messages: [{ role: 'user', content: 'q' }],
+    });
+
+    expect(isOk(outcome)).toBe(true);
+    if (isOk(outcome)) expect(outcome.value.text).toBe('');
+  });
+
+  it('does not use `thinking` for generateText either', async () => {
+    const stub = new FetchStub().on('/api/chat', {
+      json: fixture.thinkingChat('reasoning, not an answer'),
+    });
+
+    const outcome = await adapterWith(stub).generateText({
+      messages: [{ role: 'user', content: 'q' }],
+    });
+
+    expect(isOk(outcome)).toBe(true);
+    if (isOk(outcome)) expect(outcome.value.text).toBe('');
   });
 });
 

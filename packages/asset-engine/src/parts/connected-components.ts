@@ -57,6 +57,38 @@ const DEFAULT_ALPHA_THRESHOLD = 8;
 const DEFAULT_MIN_AREA_FRACTION = 0.0002;
 
 /**
+ * The threshold a **keyed parts sheet** needs, which is nothing like the default.
+ *
+ * `ThresholdMatting` gives every field pixel between `tolerance` and `softTolerance`
+ * partial alpha, which is right at the antialiased rim of a shape and is also what the
+ * field between two shapes gets when the model shaded it slightly. The result is a web
+ * of alpha 25-191 that is invisible over any background and welds the pieces into one
+ * component.
+ *
+ * Measured on the live take of `prop/lamp-cart/laden` (768x512, nine drawn pieces),
+ * sweeping `alphaThreshold` over the matted canvas:
+ *
+ * | threshold | components kept | largest component |
+ * | --------- | --------------- | ----------------- |
+ * | 8 (default) | 2             | 677x466 - the whole sheet |
+ * | 64        | 5               | 176x204           |
+ * | 128       | 8               | 176x203           |
+ * | **160**   | **10**          | **176x203**       |
+ * | 224       | 10              | 175x203           |
+ *
+ * 160 is where it saturates, and the plateau to 224 is why it is not a knife edge. Only
+ * the interior of a piece has to clear it - a shape's own antialiased rim is below it by
+ * construction, and losing a 1 px rim off a 176 px piece is not a part.
+ *
+ * **It is not a fix for everything.** The same sweep on the `prop/street-lamp/terrace`
+ * take, which the model drew with a vignette and cast shadows, never separates: the
+ * largest component is the full 768x512 canvas at every threshold up to 224, because the
+ * shadows connect the pieces at full opacity. That case has to be fixed where it is
+ * caused, in the generation prompt.
+ */
+export const SHEET_ALPHA_THRESHOLD = 160;
+
+/**
  * One raster-order pass with an explicit stack.
  *
  * Iterative rather than recursive because a 1024² canvas of one connected shape is a

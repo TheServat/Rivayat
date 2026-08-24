@@ -34,6 +34,8 @@ import { errorFromSdk } from '../../http/errors';
 import { type ImageArtifact, type ImagePayload, toImageArtifact, usage } from '../../ports/common';
 import type { ImageEditPort, ImageEditRequest } from '../../ports/image-edit';
 import type {
+  ImageCostQuote,
+  ImageCostRequest,
   ImageGenerationPort,
   ImageGenerationRequest,
   ImageResult,
@@ -52,7 +54,7 @@ import {
   buildRubricPrompt,
   parseScoreSheet,
 } from '../../ports/vision-scoring';
-import { priceCall, pricingFor } from '../../cost/pricing';
+import { priceCall, pricingFor, quoteImageCall } from '../../cost/pricing';
 import { elapsedSince, fromBase64, numberOr } from '../shared';
 
 /** Everything a Gemini model can do. Text-only models are narrowed at wiring time. */
@@ -245,6 +247,16 @@ export class GeminiAdapter
     for (const reference of request.references ?? []) parts.push(inlinePart(reference));
 
     return this.#imageCall(parts, request.size ?? null, request.seed, request.signal);
+  }
+
+  /**
+   * Priced from the same `Pricing` record `priceCall` later bills against.
+   *
+   * Research §2's numbers are per *image-output token*, so the estimate scales with
+   * area - which is also how the published price ranges behave.
+   */
+  quoteImage(request: ImageCostRequest): ImageCostQuote {
+    return quoteImageCall(this.modelRef, this.#pricing, request);
   }
 
   // ── image-edit ────────────────────────────────────────────────────────────

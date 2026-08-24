@@ -18,6 +18,18 @@ export const OllamaChatResponse = z.looseObject({
   message: z.looseObject({
     role: z.string().optional(),
     content: z.string(),
+    /**
+     * The reasoning channel - and, on a `format` call, sometimes the *answer*.
+     *
+     * Measured on 2026-08-23 against Ollama 0.32.15 and `qwen3-vl:2b`: the same prompt
+     * with no `format` returns the answer in `content` and the reasoning in `thinking`,
+     * and with a `format` schema returns `content: ""` and the **complete, valid,
+     * schema-conforming JSON** in `thinking` - with `think: false` on the request either
+     * way. Reading only `content` therefore turns a correct answer into
+     * "model returned no content", which is what took the quality gate down on every
+     * small vision model. See `schemaConstrainedText`.
+     */
+    thinking: z.string().optional(),
   }),
   done: z.boolean().optional(),
   done_reason: z.string().optional(),

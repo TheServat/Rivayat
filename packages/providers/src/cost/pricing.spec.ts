@@ -3,6 +3,7 @@ import { KNOWN_MODELS, type Pricing } from '@rv/contracts';
 import { formatUsd, sumUsd, type NanoUsd } from '@rv/shared-kernel';
 
 import type { ProviderUsage } from '../ports/common';
+import { projectedNanoUsd } from '../ports/image-generation';
 import {
   IMAGE_OUTPUT_TOKENS_PER_1K_IMAGE,
   UNPRICED,
@@ -10,6 +11,7 @@ import {
   findModelDescriptor,
   priceCall,
   pricingFor,
+  quoteImageCall,
 } from './pricing';
 
 function consumed(parts: Partial<ProviderUsage> = {}): ProviderUsage {
@@ -169,6 +171,82 @@ describe('the catalogue itself', () => {
         }),
       );
       expect(cost).toBe(0);
+    }
+  });
+});
+
+describe('quoteImageCall', () => {
+  const ref = 'openrouter:google/gemini-3.1-flash-lite-image';
+
+  function pricing(overrides: Partial<Pricing> = {}): Pricing {
+    return { ...UNPRICED, ...overrides };
+  }
+
+  it('says free, and says why, for a lane with no meter', () => {
+    const quote = quoteImageCall(ref, pricing({ free: true, note: 'local inference' }), {});
+
+    expect(quote.kind).toBe('free');
+    expect(projectedNanoUsd(quote)).toBe(0);
+    if (quote.kind === 'free') expect(quote.reason).toBe('local inference');
+  });
+
+  it('agrees with priceCall on the same request, so estimate and invoice cannot diverge', () => {
+    const rates = pricing({ imageOutputPerMTokensUsd: '30' });
+    const size = { width: 1024, height: 1024 };
+
+    const quoted = projectedNanoUsd(quoteImageCall(ref, rates, { size }));
+    const billed = priceCall(rates, consumed({ images: { count: 1, resolution: size } }));
+
+    expect(quoted).toBe(billed);
+    // Research §2's figure for a 1K image at $30 per 1M image-output tokens.
+    expect(formatUsd(billed)).toBe('$0.0387');
+  });
+
+  it('scales with the batch, because a batch is billed per image', () => {
+    const rates = pricing({ imageOutputPerMTokensUsd: '30' });
+    const size = { width: 512, height: 512 };
+
+    const one = projectedNanoUsd(quoteImageCall(ref, rates, { size })) ?? (0 as NanoUsd);
+    const four = projectedNanoUsd(quoteImageCall(ref, rates, { size, count: 4 })) ?? (0 as NanoUsd);
+    const billedForFour = priceCall(rates, consumed({ images: { count: 4, resolution: size } }));
+
+    expect(four).toBe(billedForFour);
+    // Not exactly `one * 4`: the token count is rounded once for the batch rather than
+    // four times, which is the more accurate of the two and matches what is billed.
+    expect(four / one).toBeCloseTo(4, 1);
+  });
+
+  it('prefers the published per-image price over the token estimate', () => {
+    const quote = quoteImageCall(ref, pricing({ approxPerImageUsd: '0.0336' }), {
+      size: { width: 4096, height: 4096 },
+      count: 2,
+    });
+
+    expect(quote.kind).toBe('estimated');
+    // Published, so the 4K size does not inflate it - that is the point of preferring it.
+    expect(formatUsd(projectedNanoUsd(quote) ?? (0 as NanoUsd))).toBe('$0.0672');
+    if (quote.kind === 'estimated') expect(quote.basis).toContain('published');
+  });
+
+  it('refuses to invent a number for a model nobody has priced', () => {
+    const quote = quoteImageCall(ref, UNPRICED, { size: { width: 1024, height: 1024 } });
+
+    expect(quote.kind).toBe('unpriced');
+    // Not zero. An unknown model that looks free is the most expensive way to be wrong.
+    expect(projectedNanoUsd(quote)).toBeNull();
+  });
+
+  it('quotes every image model in the catalogue rather than shrugging at it', () => {
+    const imageModels = KNOWN_MODELS.filter((model) =>
+      model.capabilities.includes('image-generation'),
+    );
+    expect(imageModels.length).toBeGreaterThan(0);
+
+    for (const model of imageModels) {
+      const quote = quoteImageCall(`${model.provider}:${model.id}`, model.pricing, {
+        size: { width: 1024, height: 1024 },
+      });
+      expect(quote.kind, `${model.provider}:${model.id}`).not.toBe('unpriced');
     }
   });
 });

@@ -88,11 +88,22 @@ export class ChainedMatting implements MattingPort {
       return ok({ ...attempt.value, engine: port.engine, fallbacks });
     }
 
+    // The last *thrown* error wins when there was one, so a missing model file still
+    // reaches the caller as a provider failure with its retryability intact. When every
+    // tier merely produced rubbish there is no error to keep, so the reasons are what
+    // the failure is made of - and they are logged either way, because a chain that
+    // threw at tier 3 and was refused at tiers 1-2 otherwise reports only the throw.
+    this.#logger.warn('matte: every engine in the chain was exhausted', {
+      attempts: fallbacks.map((entry) => `${entry.engine}: ${entry.reason}`),
+    });
     return err(
       lastError ??
         new ValidationError({
           message: 'every matting engine produced an unusable cutout',
-          context: { tried: fallbacks.map((entry) => entry.engine) },
+          context: {
+            tried: fallbacks.map((entry) => entry.engine),
+            reasons: fallbacks.map((entry) => entry.reason),
+          },
         }),
     );
   }

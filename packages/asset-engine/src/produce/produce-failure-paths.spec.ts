@@ -10,14 +10,20 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ProviderError, isOk, nanoUsd, ok, unwrap } from '@rv/shared-kernel';
+import { ProviderError, ZERO_USD, isOk, nanoUsd, ok, unwrap } from '@rv/shared-kernel';
 import { type AssetSpec, type RunId } from '@rv/contracts';
 import {
   FlatRateAssetCostEstimator,
   RegisterAssetVersionUseCase,
   ResolveAssetDemandUseCase,
 } from '@rv/asset-registry';
-import type { ImageGenerationPort, ImageGenerationRequest, ImageResult } from '@rv/providers';
+import type {
+  ImageCostQuote,
+  ImageCostRequest,
+  ImageGenerationPort,
+  ImageGenerationRequest,
+  ImageResult,
+} from '@rv/providers';
 import { toImageArtifact } from '@rv/providers';
 import type { AppError, Result } from '@rv/shared-kernel';
 
@@ -51,6 +57,16 @@ class Images implements ImageGenerationPort {
   readonly requests: ImageGenerationRequest[] = [];
 
   constructor(private readonly bytes: Uint8Array) {}
+
+  quoteImage(request: ImageCostRequest): ImageCostQuote {
+    void request;
+    return {
+      kind: 'free',
+      modelRef: 'comfyui:dreamshaper_8.safetensors',
+      nanoUsd: ZERO_USD,
+      reason: 'local inference on this machine, metered at zero',
+    };
+  }
 
   get callCount(): number {
     return this.requests.length;

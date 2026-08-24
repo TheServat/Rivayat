@@ -84,6 +84,7 @@ import {
 } from '@rv/contracts';
 import type { BlobStore, NewAssetVersion } from '@rv/asset-registry';
 import type { ProviderUsage, VisionScoringPort } from '@rv/providers';
+import { supportsPartsSheet } from '@rv/providers';
 
 import { BakeSheetUseCase, type BakeSheetSettings } from '../bake/bake-sheet';
 import { DeriveClipsUseCase } from '../clips/derive-clips';
@@ -95,6 +96,8 @@ import type {
 import { GenerateAssetVersionUseCase } from '../generate/generate-asset-version';
 import type { DecompositionStrategy, GenerationLane } from '../generate/decomposition-policy';
 import { MatteCanvasUseCase } from '../matte/matte-canvas';
+import { SHEET_ALPHA_THRESHOLD } from '../parts/connected-components';
+import type { ComponentOptions } from '../parts/connected-components';
 import { SplitPartsUseCase } from '../parts/split-parts';
 import type { MattingPort } from '../ports/matting-port';
 import type { EncodedImage, RasterPort, RgbaImage } from '../ports/raster-port';
@@ -778,6 +781,10 @@ export class ProduceAssetsUseCase {
         variantKey: ctx.variantKey ?? null,
         lane: ctx.lane,
         encoder: ctx.binding.promptEncoder ?? 'long',
+        background: ctx.binding.backgroundPrompt ?? null,
+        // Whether the lane's port can serve a parts sheet changes which graph draws the
+        // pixels, so a resumed run must not replay a take produced by the other one.
+        partsSheet: supportsPartsSheet(ctx.binding.images),
         repairClause: repairClause ?? null,
       },
       GenerateRecord,
@@ -792,6 +799,9 @@ export class ProduceAssetsUseCase {
           ...(ctx.binding.promptEncoder === undefined
             ? {}
             : { encoder: ctx.binding.promptEncoder }),
+          ...(ctx.binding.backgroundPrompt === undefined
+            ? {}
+            : { background: ctx.binding.backgroundPrompt }),
           binding: { provider: ctx.binding.provider, model: ctx.binding.model },
           stage: 'produce',
           // A repair is a deliberate second spend on the same key, and the registry
@@ -914,13 +924,20 @@ export class ProduceAssetsUseCase {
       ctx,
       'split',
       attempt,
-      { matteImageHash: matted.record.imageHash, decomposition: ctx.decomposition },
+      {
+        matteImageHash: matted.record.imageHash,
+        decomposition: ctx.decomposition,
+        // Part of the hash because it changes which components exist: a resumed run
+        // must re-split rather than replay a blob the old threshold produced.
+        alphaThreshold: componentOptionsFor(ctx.decomposition).alphaThreshold ?? null,
+      },
       SplitRecord,
       async () => {
         const split = await this.#split.execute({
           spec: ctx.spec,
           image: matted.image,
           decomposition: ctx.decomposition,
+          componentOptions: componentOptionsFor(ctx.decomposition),
         });
         if (isErr(split)) return split;
         const record: SplitRecord = {
@@ -1572,4 +1589,17 @@ async function mapWithConcurrency<T, R>(
 
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return collected.sort((left, right) => left.index - right.index).map((entry) => entry.value);
+}
+
+/**
+ * How the splitter is told to read alpha, per decomposition strategy.
+ *
+ * Only the sheet path moves. A `parts-sheet` canvas was keyed, so its background is a
+ * field of *partial* alpha that welds separated pieces together and has to be excluded
+ * explicitly - see {@link SHEET_ALPHA_THRESHOLD} for the measurement. A `segmented`
+ * canvas came off a learned matte whose soft edges are the real silhouette, and holding
+ * it to the same bar would shave every one of them.
+ */
+function componentOptionsFor(decomposition: DecompositionStrategy): ComponentOptions {
+  return decomposition === 'parts-sheet' ? { alphaThreshold: SHEET_ALPHA_THRESHOLD } : {};
 }

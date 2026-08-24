@@ -94,6 +94,8 @@ export { ModelMatting } from './matte/model-matting';
 export type { ModelMattingOptions } from './matte/model-matting';
 export { ChainedMatting, DEFAULT_ACCEPTANCE } from './matte/chained-matting';
 export type { ChainedMattingOptions, MatteAcceptance } from './matte/chained-matting';
+export { WIDE_THRESHOLD, defaultMattingChain } from './matte/matting-chain';
+export type { DefaultMattingChainOptions } from './matte/matting-chain';
 export { MatteCanvasUseCase } from './matte/matte-canvas';
 export type { MatteCanvasDeps, MatteCanvasInput, MatteCanvasOutput } from './matte/matte-canvas';
 export {
@@ -109,7 +111,11 @@ export type {
 } from './matte/adapters/birefnet-segmentation';
 
 // ── part splitting ──────────────────────────────────────────────────────────
-export { extractComponent, findComponents } from './parts/connected-components';
+export {
+  SHEET_ALPHA_THRESHOLD,
+  extractComponent,
+  findComponents,
+} from './parts/connected-components';
 export type { Component, ComponentField, ComponentOptions } from './parts/connected-components';
 export { assignComponents, toPlanTargets } from './parts/assign-components';
 export type {

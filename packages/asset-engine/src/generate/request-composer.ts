@@ -35,10 +35,48 @@ export interface ComposedRequest {
   readonly seed: number;
   /** In priority order: identity anchors first, then style, then everything else. */
   readonly references: readonly AssetReference[];
-  /** `sha256` of the prompt pair, recorded on provenance so a take is traceable. */
+  /** `sha256` of the prompt pair *and the slots*, so a take is traceable to both. */
   readonly promptHash: Sha256;
   readonly route: SubjectRoute;
+  /**
+   * The same request again, as slots, for a provider with a parts-sheet graph.
+   *
+   * Present only on a `parts-sheet` route. Both forms are composed because the composer
+   * cannot know which port will run - `PartsSheetPort` is optional and an adapter
+   * declares whether it serves one - and composing lazily at the call site would put a
+   * second copy of the prompt rules downstream of the pure function that owns them.
+   *
+   * The two are **not** redundant: `prompt` carries the layout instruction as prose,
+   * because a plain `txt2img` graph has nowhere else to put it, while the slots leave
+   * the layout to the workflow file that owns the scaffold.
+   */
+  readonly partsSheet?: PartsSheetSlots;
 }
+
+/**
+ * What `txt2img-lcm-parts-sheet.json` leaves open, mirroring `PartsSheetRequest`.
+ *
+ * Declared here rather than imported from `@rv/providers` so the composer stays a pure
+ * function of domain inputs: this package builds the values, the adapter decides what
+ * a placeholder is called.
+ */
+export interface PartsSheetSlots {
+  readonly subject: string;
+  readonly parts: readonly string[];
+  readonly style: string;
+  readonly background: string;
+  readonly grid: { readonly cols: number; readonly rows: number };
+}
+
+/**
+ * The field a parts sheet is asked to be drawn on, when the lane does not say.
+ *
+ * A flat, unsaturated grey: it keys cleanly, it is not in the paper-cutout palette, and
+ * it is the value `txt2img-lcm-parts-sheet.md` records as verified. The RGB half of the
+ * same declaration lives on `LaneBinding.backgroundHint`; the two describe one colour
+ * and drift apart the moment either is changed alone.
+ */
+export const DEFAULT_PARTS_SHEET_BACKGROUND = 'flat neutral light grey';
 
 /**
  * How much prompt the target model's text encoder can actually use.
@@ -80,6 +118,8 @@ export interface ComposeRequestInput {
   readonly repairClause?: string;
   /** Defaults to `long`, which is the behaviour every caller had before this existed. */
   readonly encoder?: PromptEncoder;
+  /** The flat field the lane asks for. Defaults to {@link DEFAULT_PARTS_SHEET_BACKGROUND}. */
+  readonly background?: string;
 }
 
 /**
@@ -149,6 +189,7 @@ export function composeGenerationRequest(
 
   const prompt = clauses.join('. ');
   const negativePrompt = negatives.join(', ');
+  const partsSheet = partsSheetSlots(input);
 
   return ok({
     prompt,
@@ -158,9 +199,54 @@ export function composeGenerationRequest(
     // the same asset must keep its own across re-runs and across machines.
     seed: hashSeed(`${String(style.seed)}:${contentHash(canonicalSpecForSeed(spec))}`),
     references,
-    promptHash: contentHash({ prompt, negativePrompt }),
+    // The slots join the hash only when they exist, so every non-parts-sheet asset ever
+    // recorded keeps the promptHash it was registered with.
+    promptHash: contentHash(
+      partsSheet === undefined
+        ? { prompt, negativePrompt }
+        : { prompt, negativePrompt, partsSheet },
+    ),
     route,
+    ...(partsSheet === undefined ? {} : { partsSheet }),
   });
+}
+
+/**
+ * The slot form of the same request, for a lane whose graph owns the scaffold.
+ *
+ * `undefined` on every route but `parts-sheet` - a single-layer or segmented asset has
+ * no components to lay out, and offering slots for it would invite a caller to run the
+ * sheet graph on a subject the policy deliberately routed away from it.
+ *
+ * Two details are load-bearing:
+ *
+ * - **`style` is trimmed for a 77-token encoder**, exactly as the prose prompt is. The
+ *   scaffold in node 4 is already ~50 tokens of layout instruction; nineteen clauses of
+ *   compiled style on top of it push the layout out of the first CLIP window, which is
+ *   the measured failure `PromptEncoder` documents.
+ * - **The repair clause rides on `style`.** The graph has no repair slot and inventing
+ *   one would change what the workflow file means. `{{style}}` is interpolated
+ *   immediately after the subject as a comma list, which is where a corrective clause
+ *   both parses and carries weight; appending it to `{{parts}}` would make the splitter
+ *   look for a component named after the instruction.
+ */
+function partsSheetSlots(input: ComposeRequestInput): PartsSheetSlots | undefined {
+  const { spec, style, route } = input;
+  if (route.decomposition !== 'parts-sheet') return undefined;
+
+  const positive =
+    (input.encoder ?? 'long') === 'clip-77'
+      ? trimClauses(style.prompts.positive, CLIP_STYLE_CLAUSES)
+      : style.prompts.positive;
+
+  const cols = Math.ceil(Math.sqrt(spec.parts.length));
+  return {
+    subject: spec.description,
+    parts: spec.parts.map((part) => part.name),
+    style: input.repairClause === undefined ? positive : `${positive}, ${input.repairClause}`,
+    background: input.background ?? DEFAULT_PARTS_SHEET_BACKGROUND,
+    grid: { cols, rows: Math.ceil(spec.parts.length / cols) },
+  };
 }
 
 /**
@@ -237,5 +323,6 @@ export function requestFingerprint(request: ComposedRequest): string {
     size: request.size,
     seed: request.seed,
     references: request.references,
+    ...(request.partsSheet === undefined ? {} : { partsSheet: request.partsSheet }),
   });
 }
