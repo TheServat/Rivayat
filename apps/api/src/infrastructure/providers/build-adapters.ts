@@ -59,11 +59,13 @@ function buildOllama(config: AppConfig): readonly ProviderAdapter[] {
       model: config.providers.ollama.textModel,
       baseUrl: host,
       capabilities: generative,
+      timeoutMs: config.providers.ollama.timeoutMs,
     }),
     new OllamaAdapter({
       model: config.providers.ollama.embedModel,
       baseUrl: host,
       capabilities: embeddingOnly,
+      timeoutMs: config.providers.ollama.timeoutMs,
     }),
   ];
 }

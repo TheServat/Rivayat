@@ -114,6 +114,15 @@ export const EnvSchema = z.object({
   RV_OLLAMA_FAST_MODEL: stringEnv('qwen3:1.7b'),
   RV_OLLAMA_VISION_MODEL: stringEnv('gemma4:26b'),
   RV_OLLAMA_EMBED_MODEL: stringEnv('nomic-embed-text'),
+  /**
+   * How long a local generation may take before it is abandoned.
+   *
+   * The HTTP client's own default is 120 s, which is right for a hosted API and wrong
+   * for a 6 GB card: a story outline on `qwen2.5:7b` exceeds it, and the caller sees a
+   * timeout rather than a slow answer. Local inference is not a network problem and
+   * should not inherit a network timeout.
+   */
+  RV_OLLAMA_TIMEOUT_MS: intEnv(1_000, 3_600_000, 600_000),
 
   GEMINI_API_KEY: optionalEnv(z.string().min(1)),
   RV_GEMINI_TEXT_MODEL: stringEnv('gemini-3-flash'),

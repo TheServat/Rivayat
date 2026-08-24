@@ -127,6 +127,7 @@ const toAppConfig = (env: z.infer<typeof EnvSchema>) =>
         fastModel: env.RV_OLLAMA_FAST_MODEL,
         visionModel: env.RV_OLLAMA_VISION_MODEL,
         embedModel: env.RV_OLLAMA_EMBED_MODEL,
+        timeoutMs: env.RV_OLLAMA_TIMEOUT_MS,
       },
       gemini: {
         apiKey: env.GEMINI_API_KEY,
