@@ -4,6 +4,15 @@
   "private": true,
   "type": "module",
   "description": "NestJS delivery layer: REST generated from @rv/contracts, SSE run progress, BullMQ or in-process workers, and the composition root that binds every port to an adapter.",
+  "exports": {
+    ".": {
+      "types": "./dist/public.d.ts",
+      "development": "./src/public.ts",
+      "import": "./dist/public.js",
+      "default": "./dist/public.js"
+    },
+    "./package.json": "./package.json"
+  },
   "main": "./dist/main.js",
   "scripts": {
     "build": "tsup",

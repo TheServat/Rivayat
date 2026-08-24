@@ -81,10 +81,20 @@ export class RunEventBus {
    * `concat` rather than `merge`: ordering is the contract. A UI that renders
    * `stage-completed` before `stage-started` shows a stage that finished before it
    * began, and there is no way for it to recover from that.
+   *
+   * **A sequence number from the future is treated as zero.** History lives in this
+   * process, so a restart - which is exactly what a resumed run is on the other side
+   * of - gives the run a fresh channel numbering from 1 while the browser is still
+   * holding `Last-Event-ID: 20` from before. Filtering `> 20` against a channel whose
+   * highest event is 3 sends the client nothing, forever, on a run that is visibly
+   * progressing. Replaying from the beginning is the recoverable answer: the client
+   * re-renders events it has already seen, which is idempotent, instead of watching a
+   * dead stream.
    */
   subscribe(runId: RunId, afterSeq = 0): Observable<RunEvent> {
     const channel = this.#channelFor(runId);
-    const missed = channel.history.filter((event) => event.seq > afterSeq);
+    const since = afterSeq > channel.seq ? 0 : afterSeq;
+    const missed = channel.history.filter((event) => event.seq > since);
 
     if (channel.finished) return from(missed);
     return concat(from(missed), channel.subject.asObservable());
@@ -93,6 +103,19 @@ export class RunEventBus {
   /** Events recorded for a run so far. Read by the run resource and by tests. */
   history(runId: RunId): readonly RunEvent[] {
     return this.#channels.get(runId)?.history ?? [];
+  }
+
+  /**
+   * Whether this run's stream has already sent its terminal event.
+   *
+   * Public because the SSE controller has to answer a question the bus cannot: a run
+   * that finished in a *previous process* is terminal in the database and unknown to
+   * this bus, so its channel is open, empty, and will never complete. A client waiting
+   * for `run-completed` on it waits for ever behind heartbeats. The controller compares
+   * this against the run record and publishes the terminal event the stream is missing.
+   */
+  isFinished(runId: RunId): boolean {
+    return this.#channels.get(runId)?.finished ?? false;
   }
 
   /**

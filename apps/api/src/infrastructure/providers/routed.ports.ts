@@ -24,6 +24,8 @@ import type {
   EmbeddingPort,
   EmbeddingRequest,
   EmbeddingResult,
+  ImageCostQuote,
+  ImageCostRequest,
   ImageEditPort,
   ImageEditRequest,
   ImageGenerationPort,
@@ -40,6 +42,14 @@ import type {
 } from '@rv/providers';
 import type { AppError, Result } from '@rv/shared-kernel';
 import { isErr, ok } from '@rv/shared-kernel';
+
+/**
+ * The model reference used when there is no model.
+ *
+ * A quote must name something, and naming a real provider that was never selected would
+ * put a fictional row in the audit trail. This is deliberately not a valid provider.
+ */
+const UNROUTED = 'unrouted:none';
 
 export interface RoutedPortDeps {
   readonly router: ModelRouter;
@@ -101,6 +111,45 @@ export class RoutedImageGenerationPort implements ImageGenerationPort {
     return through(this.#deps, 'image-draft', 'image-generation', (port) =>
       port.generateImage(request),
     );
+  }
+
+  /**
+   * The price of the call the router would actually make, from the head of the chain.
+   *
+   * The head rather than a survey of the chain: the guard has to answer "what will this
+   * cost", and what it will cost is what the first binding charges. A failover to the
+   * second is a *different* call, and pricing the chain's maximum would refuse batches
+   * that will never be that expensive.
+   *
+   * When nothing can serve the task there is no model and therefore no price, which is
+   * `unpriced` rather than `free`. Collapsing the two would make an unconfigured
+   * workspace look like the cheapest possible one to the budget guard - the most
+   * expensive way to be wrong (see the port's own note on the three arms).
+   */
+  quoteImage(request: ImageCostRequest): ImageCostQuote {
+    const route = this.#deps.router.route({
+      task: 'image-draft',
+      tier: this.#deps.tier ?? 'preview',
+    });
+    if (isErr(route)) {
+      return {
+        kind: 'unpriced',
+        modelRef: UNROUTED,
+        reason: `no image-generation provider is configured: ${route.error.code}`,
+      };
+    }
+
+    const head = route.value.chain[0];
+    if (head === undefined) {
+      return { kind: 'unpriced', modelRef: UNROUTED, reason: 'the routing chain is empty' };
+    }
+
+    const ref = modelRef(head.provider, head.model);
+    const port = this.#deps.matrix.resolve(ref, 'image-generation');
+    if (isErr(port)) {
+      return { kind: 'unpriced', modelRef: ref, reason: port.error.code };
+    }
+    return port.value.quoteImage(request);
   }
 }
 

@@ -10,15 +10,18 @@ import { defineConfig } from 'tsup';
  * `NodeNext` would need a `.js` suffix on several hundred import specifiers - a
  * repo-wide convention change to make one app's build work.
  *
- * ESM only, no CJS: this is a program, not a library. Nothing imports it.
+ * ESM only, no CJS: both consumers are this repo, and both are ESM.
  *
- * `dts` is off for the same reason - there is no consumer to hand types to - and it
- * saves the slowest step of the build.
+ * **Two entries, and the second is not an afterthought.** `main.ts` is the server;
+ * `public.ts` is the orchestration surface `apps/cli` imports so that `rv run` and
+ * `POST /api/runs` drive the *same* `PipelineRunner` rather than two implementations of
+ * it that drift. `dts` is therefore on - there is now a consumer to hand types to, and
+ * it is the slowest step of the build for exactly that reason.
  */
 export default defineConfig({
-  entry: ['src/main.ts'],
+  entry: ['src/main.ts', 'src/public.ts'],
   format: ['esm'],
-  dts: false,
+  dts: { entry: 'src/public.ts' },
   sourcemap: true,
   clean: true,
   // Off: Nest resolves providers by the tokens on their `@Inject`s, and shaking a

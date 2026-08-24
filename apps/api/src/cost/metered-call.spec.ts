@@ -14,6 +14,7 @@
 import { Ids, type ProjectId, type RunId, type UsageRecord } from '@rv/contracts';
 import type { ProviderUsage } from '@rv/providers';
 import {
+  CancelledError,
   FixedClock,
   InternalError,
   MemoryLogger,
@@ -277,6 +278,68 @@ describe('MeteredCallRunner', () => {
     expect(unwritable.events.history(RUN).some((event) => event.type === 'cost-updated')).toBe(
       true,
     );
+  });
+
+  describe('when the run has been cancelled', () => {
+    it('refuses before the guard, with the provider untouched and no ledger row', async () => {
+      const uncapped = build(null);
+      const controller = new AbortController();
+      controller.abort();
+
+      const outcome = await uncapped.runner.run({ ...free(null), signal: controller.signal }, () =>
+        uncapped.provider.respond(),
+      );
+
+      expect(isErr(outcome)).toBe(true);
+      if (!isErr(outcome)) return;
+      expect(outcome.error.kind).toBe('cancelled');
+
+      // The two assertions RV-187 actually makes. A cancel that only stopped the *next*
+      // stage would leave `calls` at 1, and a cancel that recorded the call anyway would
+      // keep writing ledger rows for a run the user stopped.
+      expect(uncapped.provider.calls).toBe(0);
+      expect(uncapped.repository.appended).toEqual([]);
+    });
+
+    it('writes no ledger row for a call torn down in flight', async () => {
+      const uncapped = build(null);
+      const controller = new AbortController();
+
+      // The provider observes the abort and reports it, which is what an adapter does
+      // when `fetch` rejects with `AbortError`. It has already been invoked, so this is
+      // the mid-flight case rather than the pre-flight one above.
+      const outcome = await uncapped.runner.run(
+        { ...free(null), signal: controller.signal },
+        () => {
+          controller.abort();
+          return Promise.resolve({
+            ok: false as const,
+            error: new CancelledError('image generation'),
+          });
+        },
+      );
+
+      expect(isErr(outcome)).toBe(true);
+      expect(uncapped.repository.appended).toEqual([]);
+      expect(uncapped.events.history(RUN).some((event) => event.type === 'cost-updated')).toBe(
+        false,
+      );
+    });
+
+    it('hands the signal to the closure, so an adapter can pass it to the socket', async () => {
+      const uncapped = build(null);
+      const controller = new AbortController();
+      let received: AbortSignal | undefined;
+
+      await uncapped.runner.run({ ...free(null), signal: controller.signal }, (signal) => {
+        received = signal;
+        return uncapped.provider.respond();
+      });
+
+      // The runner is the single source of the signal. A closure that had to close over
+      // its own copy is a closure that can be written without one.
+      expect(received).toBe(controller.signal);
+    });
   });
 
   it('never refuses when nothing is capped', async () => {

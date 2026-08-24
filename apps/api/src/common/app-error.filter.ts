@@ -70,6 +70,25 @@ function issuesOf(error: AppError): ErrorEnvelope['error']['issues'] {
   return structured.length > 0 ? structured : undefined;
 }
 
+/** An HTTP status a non-Nest middleware attached to its own error, if it did. */
+function statusOf(exception: unknown): number | undefined {
+  if (typeof exception !== 'object' || exception === null) return undefined;
+  const carrier = exception as { status?: unknown; statusCode?: unknown };
+  const status = typeof carrier.status === 'number' ? carrier.status : carrier.statusCode;
+  if (typeof status !== 'number') return undefined;
+  return status >= 400 && status < 500 ? status : undefined;
+}
+
+/** The message such an error carries. Safe to relay: it is ours, not a user's input. */
+function messageOf(exception: unknown): string {
+  return exception instanceof Error ? exception.message : 'Request rejected';
+}
+
+function boundary(status: number, message: string): HttpBoundaryError {
+  const kind: ErrorKind = status === 404 ? 'not-found' : status < 500 ? 'validation' : 'internal';
+  return new HttpBoundaryError(`HTTP_${String(status)}`, kind, message, status);
+}
+
 /** Anything that is not an `AppError` becomes one, at the boundary, exactly once. */
 function normalise(exception: unknown): { readonly error: AppError; readonly status: number } {
   if (isAppError(exception)) {
@@ -78,11 +97,18 @@ function normalise(exception: unknown): { readonly error: AppError; readonly sta
 
   if (exception instanceof HttpException) {
     const status = exception.getStatus();
-    const kind: ErrorKind = status === 404 ? 'not-found' : status < 500 ? 'validation' : 'internal';
-    return {
-      error: new HttpBoundaryError(`HTTP_${String(status)}`, kind, exception.message, status),
-      status,
-    };
+    return { error: boundary(status, exception.message), status };
+  }
+
+  // Express middleware failures - a body over the limit, malformed JSON, an
+  // unsupported charset - are plain `Error`s carrying a numeric `status`, not
+  // `HttpException`s. Without this arm every one of them was a 500 with an empty
+  // context, so "your composition is too large" and "the server has a bug" were the
+  // same response. The status is only trusted in the 4xx range: a middleware claiming
+  // 5xx is reporting our fault, and our faults do not get to choose their own message.
+  const relayed = statusOf(exception);
+  if (relayed !== undefined) {
+    return { error: boundary(relayed, messageOf(exception)), status: relayed };
   }
 
   return {

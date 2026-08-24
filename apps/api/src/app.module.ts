@@ -47,6 +47,14 @@ import {
   type ResponseCache,
 } from '@rv/providers';
 import type { StructuredBackend } from '@rv/prompt-kit';
+import {
+  FfmpegEncoder,
+  FfprobeReader,
+  NodeProcessRunner,
+  createNapiCanvasBackend,
+  type FrameBackendId,
+  type FrameRenderer,
+} from '@rv/render-engine';
 import type { SettingsRepository } from '@rv/settings';
 import {
   SystemClock,
@@ -71,6 +79,7 @@ import type {
   SeriesRepository,
   StyleBibleReader,
 } from './application/ports/repository.ports';
+import type { RunPayloadStore } from './application/ports/run-payload.port';
 import { AppErrorFilter } from './common/app-error.filter';
 import { PinoLoggerAdapter, createPinoLogger } from './common/pino-logger';
 import { ResultInterceptor } from './common/result.interceptor';
@@ -78,6 +87,7 @@ import { ZodValidationPipe } from './common/zod-validation.pipe';
 import { RivayatConfigModule } from './config/config.module';
 import { routerConfigFrom, type AppConfig } from './config/app-config';
 import { CostService } from './cost/cost.service';
+import { LedgerService } from './cost/ledger.service';
 import { MeteredCallRunner } from './cost/metered-call';
 import { EventsModule } from './events/events.module';
 import type { RunEventBus } from './events/run-event-bus';
@@ -91,6 +101,7 @@ import {
 import { DrizzleEpisodeRepository } from './infrastructure/persistence/drizzle-episode.repository';
 import { DrizzleRunRepository } from './infrastructure/persistence/drizzle-run.repository';
 import { DrizzleStyleBibleReader } from './infrastructure/persistence/drizzle-style-bible.reader';
+import { JsonFileRunPayloadStore } from './infrastructure/persistence/json-file-run-payload.store';
 import {
   JsonFileProjectRepository,
   JsonFileSeriesRepository,
@@ -124,6 +135,11 @@ import { StyleModule } from './modules/style/style.module';
 import { OpenApiModule } from './openapi/openapi.module';
 import { IntakeStageHandler, ResolveStageHandler, StubStageHandler } from './pipeline/handlers';
 import { PipelineRunner } from './pipeline/pipeline-runner.service';
+import { CompositionStore } from './modules/compositions/composition.store';
+import { CompositionsModule } from './modules/compositions/compositions.module';
+import { DeliveryService } from './render/delivery.service';
+import { ReframeService } from './render/reframe.service';
+import { RenderStageHandler } from './render/render-stage.handler';
 import { buildStageRegistry, type StageHandler, type StageRegistry } from './pipeline/stage';
 import { BullMqJobQueue } from './queue/bullmq.queue';
 import { InProcessJobQueue } from './queue/in-process.queue';
@@ -137,22 +153,28 @@ import {
   CAPABILITY_MATRIX,
   CLOCK,
   COST_SERVICE,
+  COMPOSITION_STORE,
   DATABASE,
+  DELIVERY_SERVICE,
   EMBEDDING_PORT,
   EPISODE_REPOSITORY,
+  FRAME_RENDERERS,
   IDS,
   IMAGE_EDIT_PORT,
   IMAGE_GENERATION_PORT,
   JOB_QUEUE,
+  LEDGER_SERVICE,
   LOGGER,
   METERED_CALL_RUNNER,
   MODEL_ROUTER,
   NARRATIVE_MEMORY_PORT,
   PROJECT_REPOSITORY,
+  REFRAME_SERVICE,
   RENDER_PORT,
   RESPONSE_CACHE,
   RNG,
   RUN_EVENT_BUS,
+  RUN_PAYLOAD_STORE,
   RUN_REPOSITORY,
   SERIES_REPOSITORY,
   SETTINGS_REPOSITORY,
@@ -162,6 +184,8 @@ import {
   STRUCTURED_GENERATION_PORT,
   STYLE_ENGINE_PORT,
   TEXT_GENERATION_PORT,
+  VIDEO_ENCODER,
+  VIDEO_PROBER,
   VISION_SCORING_PORT,
 } from './tokens';
 
@@ -170,11 +194,15 @@ export interface AppOptions {
   readonly env?: Record<string, unknown>;
 }
 
-/** Every pipeline stage, with the two that have engine-free implementations wired. */
-function stageHandlers(resolve: ResolveAssetDemandUseCase): readonly StageHandler[] {
+/** Every pipeline stage, with the three that have real implementations wired. */
+function stageHandlers(
+  resolve: ResolveAssetDemandUseCase,
+  render: RenderStageHandler,
+): readonly StageHandler[] {
   return [
     new IntakeStageHandler(),
     new ResolveStageHandler(resolve),
+    render,
     // The rest, in pipeline order. Listed explicitly rather than derived from the enum
     // minus the implemented ones, so adding a stage to `@rv/contracts` shows up here as
     // a missing entry rather than as a silently-stubbed route.
@@ -186,7 +214,6 @@ function stageHandlers(resolve: ResolveAssetDemandUseCase): readonly StageHandle
     new StubStageHandler('sequence'),
     new StubStageHandler('choreograph'),
     new StubStageHandler('preview'),
-    new StubStageHandler('render'),
     new StubStageHandler('deliver'),
   ];
 }
@@ -206,6 +233,7 @@ export class AppModule {
         EpisodesModule,
         StyleModule,
         AssetsModule,
+        CompositionsModule,
         NarrativeModule,
         PipelineModule,
         RenderModule,
@@ -304,6 +332,12 @@ export class AppModule {
             new DrizzleSettingsRepository(database),
         },
         {
+          provide: RUN_PAYLOAD_STORE,
+          inject: [APP_CONFIG, LOGGER],
+          useFactory: (config: AppConfig, logger: Logger): RunPayloadStore =>
+            new JsonFileRunPayloadStore({ workspaceDir: config.paths.workspaceDir, logger }),
+        },
+        {
           provide: ASSET_COST_ESTIMATOR,
           useFactory: (): FlatRateAssetCostEstimator => new FlatRateAssetCostEstimator(),
         },
@@ -381,6 +415,16 @@ export class AppModule {
             new CostService({ clock, logger, ids, policy: config.budget }),
         },
         {
+          provide: LEDGER_SERVICE,
+          inject: [RUN_REPOSITORY, COST_SERVICE, CLOCK, LOGGER],
+          useFactory: (
+            runs: RunRepository,
+            cost: CostService,
+            clock: Clock,
+            logger: Logger,
+          ): LedgerService => new LedgerService({ runs, cost, clock, logger }),
+        },
+        {
           provide: METERED_CALL_RUNNER,
           inject: [COST_SERVICE, RUN_EVENT_BUS, RUN_REPOSITORY, LOGGER],
           useFactory: (
@@ -445,17 +489,107 @@ export class AppModule {
                   clock,
                 }),
         },
+        // ── render backends ──────────────────────────────────────
+        {
+          // Skia only. The Playwright backend needs a browser download and a running
+          // Chromium, which is not something an API boot may assume; `selectBackend`
+          // refuses a composition that needs it rather than drawing it *almost* right.
+          provide: FRAME_RENDERERS,
+          useFactory: (): ReadonlyMap<FrameBackendId, FrameRenderer> =>
+            new Map([['napi-canvas', createNapiCanvasBackend()]]),
+        },
+        {
+          provide: VIDEO_ENCODER,
+          inject: [APP_CONFIG],
+          useFactory: (config: AppConfig): FfmpegEncoder =>
+            new FfmpegEncoder(new NodeProcessRunner(), {
+              ffmpeg: config.paths.ffmpegPath,
+              ffprobe: config.paths.ffprobePath,
+            }),
+        },
+        {
+          provide: VIDEO_PROBER,
+          inject: [APP_CONFIG],
+          useFactory: (config: AppConfig): FfprobeReader =>
+            new FfprobeReader(new NodeProcessRunner(), {
+              ffmpeg: config.paths.ffmpegPath,
+              ffprobe: config.paths.ffprobePath,
+            }),
+        },
+        {
+          provide: REFRAME_SERVICE,
+          inject: [IDS],
+          useFactory: (ids: Ids): ReframeService => new ReframeService({ ids }),
+        },
+        {
+          provide: COMPOSITION_STORE,
+          inject: [APP_CONFIG, CLOCK, LOGGER],
+          useFactory: (config: AppConfig, clock: Clock, logger: Logger): CompositionStore =>
+            new CompositionStore({
+              workspaceDir: config.paths.workspaceDir,
+              clock,
+              logger,
+            }),
+        },
+        {
+          provide: DELIVERY_SERVICE,
+          inject: [RUN_REPOSITORY, APP_CONFIG],
+          useFactory: (runs: RunRepository, config: AppConfig): DeliveryService =>
+            new DeliveryService({ runs, workspaceDir: config.paths.workspaceDir }),
+        },
+
         {
           provide: STAGE_REGISTRY,
-          inject: [RESOLVE_ASSET_DEMAND_USE_CASE],
-          useFactory: (resolve: ResolveAssetDemandUseCase): StageRegistry =>
-            buildStageRegistry(stageHandlers(resolve)),
+          inject: [
+            RESOLVE_ASSET_DEMAND_USE_CASE,
+            FRAME_RENDERERS,
+            VIDEO_ENCODER,
+            VIDEO_PROBER,
+            COMPOSITION_STORE,
+            CLOCK,
+            LOGGER,
+            APP_CONFIG,
+          ],
+          useFactory: (
+            resolve: ResolveAssetDemandUseCase,
+            renderers: ReadonlyMap<FrameBackendId, FrameRenderer>,
+            encoder: FfmpegEncoder,
+            prober: FfprobeReader,
+            compositions: CompositionStore,
+            clock: Clock,
+            logger: Logger,
+            config: AppConfig,
+          ): StageRegistry =>
+            buildStageRegistry(
+              stageHandlers(
+                resolve,
+                new RenderStageHandler({
+                  renderers,
+                  encoder,
+                  prober,
+                  compositions,
+                  clock,
+                  logger,
+                  workspaceDir: config.paths.workspaceDir,
+                }),
+              ),
+            ),
         },
         {
           provide: PIPELINE_RUNNER,
-          inject: [RUN_REPOSITORY, JOB_QUEUE, RUN_EVENT_BUS, STAGE_REGISTRY, CLOCK, IDS, LOGGER],
+          inject: [
+            RUN_REPOSITORY,
+            RUN_PAYLOAD_STORE,
+            JOB_QUEUE,
+            RUN_EVENT_BUS,
+            STAGE_REGISTRY,
+            CLOCK,
+            IDS,
+            LOGGER,
+          ],
           useFactory: (
             runs: RunRepository,
+            payloads: RunPayloadStore,
             queue: JobQueue,
             events: RunEventBus,
             stages: StageRegistry,
@@ -463,7 +597,7 @@ export class AppModule {
             ids: Ids,
             logger: Logger,
           ): PipelineRunner =>
-            new PipelineRunner({ runs, queue, events, stages, clock, ids, logger }),
+            new PipelineRunner({ runs, payloads, queue, events, stages, clock, ids, logger }),
         },
       ],
       // `APP_CONFIG`, `MACHINE_SETTINGS` and `RUN_EVENT_BUS` are absent on purpose:
@@ -480,6 +614,7 @@ export class AppModule {
         ASSET_COST_ESTIMATOR,
         EPISODE_REPOSITORY,
         RUN_REPOSITORY,
+        RUN_PAYLOAD_STORE,
         PROJECT_REPOSITORY,
         SERIES_REPOSITORY,
         SETTINGS_REPOSITORY,
@@ -495,12 +630,19 @@ export class AppModule {
         VISION_SCORING_PORT,
         EMBEDDING_PORT,
         COST_SERVICE,
+        LEDGER_SERVICE,
         METERED_CALL_RUNNER,
         STYLE_ENGINE_PORT,
         STORY_ENGINE_PORT,
         ASSET_PRODUCTION_PORT,
         NARRATIVE_MEMORY_PORT,
         RENDER_PORT,
+        FRAME_RENDERERS,
+        VIDEO_ENCODER,
+        VIDEO_PROBER,
+        REFRAME_SERVICE,
+        DELIVERY_SERVICE,
+        COMPOSITION_STORE,
         RESOLVE_ASSET_DEMAND_USE_CASE,
         FIND_SIMILAR_ASSETS_USE_CASE,
         JOB_QUEUE,

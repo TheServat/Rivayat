@@ -3,11 +3,14 @@
  *
  * Two things here are not decoration.
  *
- * **`Last-Event-ID`.** The browser sends it automatically on an `EventSource`
- * reconnect. Honouring it is what makes a dropped connection invisible: the bus
- * replays everything after that sequence number before resuming live delivery. Ignore
- * it and a proxy blip during stage 6 leaves the UI reporting stage 5 until the run
- * ends.
+ * **`Last-Event-ID`, as a header *and* as a query parameter.** The browser sends the
+ * header automatically on an `EventSource` reconnect, and honouring it is what makes a
+ * dropped connection invisible. But `EventSource` cannot set a header, so a client that
+ * rebuilds its own connection - after a route change, a manual retry, a resumed run -
+ * has no way to send one and replays from sequence 1. That made an *explicit* reconnect
+ * strictly worse than an implicit one, which is a surprising enough property that
+ * clients started leaning on the browser's internal retry to avoid it. `?lastEventId=`
+ * is the same value by the only route such a client has.
  *
  * **Heartbeats.** Reverse proxies and load balancers close idle connections, typically
  * at 30-60 seconds. Stage 6 Produce can generate images for several minutes without
@@ -19,12 +22,13 @@
  * spinner after the video is ready.
  */
 
-import { Controller, Headers, Inject, Param, Sse } from '@nestjs/common';
+import { Controller, Headers, Inject, Param, Query, Sse } from '@nestjs/common';
 import type { RunId } from '@rv/contracts';
 import { NotFoundError, isErr } from '@rv/shared-kernel';
 import { Observable, ReplaySubject, finalize, interval, map, merge, takeUntil } from 'rxjs';
 
 import type { RunRepository } from '../application/ports/repository.ports';
+import { isTerminalRunStatus, type RunSummary } from '../application/resources';
 import { RUN_EVENT_BUS, RUN_REPOSITORY } from '../tokens';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { RunIdParam } from './events.contracts';
@@ -54,6 +58,37 @@ function parseLastEventId(header: string | undefined): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+/**
+ * The terminal event a finished run's stream is missing, from the run record.
+ *
+ * The event log lives in memory, so a run that finished before this process started -
+ * or in a worker, or in the process the resume replaced - has a terminal *state* and no
+ * terminal *event*. Without this the stream stays open on heartbeats and a client
+ * waiting for `run-completed` waits for ever, on a run that finished yesterday.
+ *
+ * Reconstructed rather than invented: every field comes off the run.
+ */
+function terminalEventFor(run: RunSummary): {
+  readonly type: 'run-completed';
+  readonly runId: RunId;
+  readonly status: 'succeeded' | 'failed' | 'cancelled';
+  readonly totalNanoUsd: number;
+  readonly errorKind: string | null;
+  readonly errorCode: string | null;
+} | null {
+  if (run.status !== 'succeeded' && run.status !== 'failed' && run.status !== 'cancelled') {
+    return null;
+  }
+  return {
+    type: 'run-completed',
+    runId: run.id,
+    status: run.status,
+    totalNanoUsd: run.spentNanoUsd,
+    errorKind: run.status === 'cancelled' ? 'cancelled' : run.status === 'failed' ? 'error' : null,
+    errorCode: run.errorCode,
+  };
+}
+
 @Controller('runs')
 export class RunEventsController {
   readonly #bus: RunEventBus;
@@ -79,10 +114,19 @@ export class RunEventsController {
   async stream(
     @Param('id', new ZodValidationPipe(RunIdParam)) runId: RunId,
     @Headers('last-event-id') lastEventId?: string,
+    @Query('lastEventId') lastEventIdQuery?: string,
   ): Promise<Observable<SseFrame>> {
     const run = await this.#runs.findById(runId);
     if (isErr(run)) throw run.error;
     if (run.value === null) throw new NotFoundError('run', runId);
+
+    // A run that is over but whose stream never said so: give it the terminal event
+    // from the record, once, before anyone subscribes. `publish` completes the channel,
+    // so the connection below ends instead of heartbeating for ever.
+    if (isTerminalRunStatus(run.value.status) && !this.#bus.isFinished(runId)) {
+      const terminal = terminalEventFor(run.value);
+      if (terminal !== null) this.#bus.publish(terminal);
+    }
 
     /**
      * A `ReplaySubject`, not a plain one, and the difference is the whole bug it fixes.
@@ -96,7 +140,11 @@ export class RunEventsController {
      */
     const closed = new ReplaySubject<void>(1);
 
-    const events = this.#bus.subscribe(runId, parseLastEventId(lastEventId)).pipe(
+    // The header wins when both are present: it is the browser's own, and it is
+    // therefore the one that is right about what this connection last received.
+    const since = parseLastEventId(lastEventId ?? lastEventIdQuery);
+
+    const events = this.#bus.subscribe(runId, since).pipe(
       map((event): SseFrame => ({
         // The sequence number *is* the SSE id, which is what makes the browser send
         // it back as `Last-Event-ID`. Any other id would break replay.

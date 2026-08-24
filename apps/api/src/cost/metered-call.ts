@@ -24,7 +24,16 @@ import type {
   TaskKind,
 } from '@rv/contracts';
 import type { ProviderUsage } from '@rv/providers';
-import { type AppError, type Logger, type Result, isErr, ok, toUsd } from '@rv/shared-kernel';
+import {
+  CancelledError,
+  type AppError,
+  type Logger,
+  type Result,
+  err,
+  isErr,
+  ok,
+  toUsd,
+} from '@rv/shared-kernel';
 
 import type { RunEventBus } from '../events/run-event-bus';
 import type { RunRepository } from '../application/ports/repository.ports';
@@ -47,6 +56,14 @@ export interface MeteredCallSpec {
    * would wave through the one call that matters.
    */
   readonly estimate: ProviderUsage;
+  /**
+   * Aborted when the run is cancelled.
+   *
+   * On the *spec* rather than only inside the closure so that the runner can refuse
+   * before the guard: cancellation that only reaches the HTTP client still lets the
+   * queued call go out, and the operator who pressed stop is billed for it.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** What the closure returns: the value, and what it actually consumed. */
@@ -82,8 +99,15 @@ export class MeteredCallRunner {
    */
   async run<T>(
     spec: MeteredCallSpec,
-    call: () => Promise<Result<MeteredOutcome<T>, AppError>>,
+    call: (signal: AbortSignal | undefined) => Promise<Result<MeteredOutcome<T>, AppError>>,
   ): Promise<Result<T, AppError>> {
+    // Before the guard, before the price, before anything: a cancelled run must not
+    // make one more call. RV-187's "no further ledger rows are written" is only true if
+    // the refusal happens here, because everything past this point writes a row.
+    if (spec.signal?.aborted === true) {
+      return err(new CancelledError(`${spec.stage} call to ${spec.provider}:${spec.model}`));
+    }
+
     const projected = this.#cost.price(spec.projectId, spec.provider, spec.model, spec.estimate);
 
     const allowed = this.#cost.check(spec.projectId, spec.budget, projected);
@@ -104,7 +128,21 @@ export class MeteredCallRunner {
       return allowed;
     }
 
-    const outcome = await call();
+    const outcome = await call(spec.signal);
+
+    // A call torn down mid-flight is not a failure to be filed, it is work that was
+    // stopped. Recording the *estimate* for it - which is what the failure path below
+    // does, having nothing better - would bill a cancelled run for tokens it may never
+    // have consumed, and RV-187 is explicit that a cancel writes no further rows. The
+    // honest limit: a provider may still charge for a request it had already started,
+    // and nothing on this side can see that.
+    if (isErr(outcome) && outcome.error.kind === 'cancelled') {
+      this.#logger.debug('call cancelled in flight; no ledger row', {
+        stage: spec.stage,
+        model: `${spec.provider}:${spec.model}`,
+      });
+      return outcome;
+    }
 
     // Recorded on both paths: a call that burned input tokens and then returned a 500
     // still cost money, and a ledger that only records successes under-reports exactly

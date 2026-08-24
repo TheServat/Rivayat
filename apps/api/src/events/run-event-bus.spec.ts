@@ -104,6 +104,7 @@ describe('RunEventBus', () => {
       stage: 'intake',
       progress: 0.5,
       detail: null,
+      item: null,
     });
     events.publish({
       type: 'run-completed',
@@ -161,6 +162,7 @@ describe('RunEventBus', () => {
         stage: 'intake',
         progress: 0,
         detail: null,
+        item: null,
       });
     }
     const history = events.history(RUN);

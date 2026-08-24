@@ -1,19 +1,21 @@
 /**
  * `RunRepository` over the `runs` and `usage_records` tables in `@rv/persistence`.
  *
- * **Two impedance mismatches, both deliberate and both worth reporting upstream.**
+ * **`runs.state` now holds the canonical status, all six of it.** It used to offer
+ * five - `queued | running | paused | done | failed` - so `succeeded` was written as
+ * `done` and **`cancelled` was written as `failed`**, with the truth kept in
+ * `metadata.status`. That fold cost the one distinction an operator most needs: the
+ * indexed column that exists to answer "show me the failed runs" answered it with the
+ * cancelled ones mixed in, and "I stopped this" read as "this broke". `@rv/persistence`
+ * has widened the column to `PipelineStatus`, so the status is written where the index
+ * can see it. {@link statusOf} still *reads* `metadata.status` first, because rows
+ * written before the widening carry `done`/`failed` in the column and there is no
+ * migration that can recover a `cancelled` those rows never recorded.
  *
- * 1. `runs.state` is `'queued' | 'running' | 'paused' | 'done' | 'failed'` - five
- *    states, where the pipeline has six. `succeeded` maps to `done` and `cancelled`
- *    maps to `failed`, which loses the distinction the UI most needs ("I stopped it"
- *    versus "it broke"). So the column keeps the mapped value, for the index it
- *    exists to serve, and `metadata.status` keeps the canonical one. When
- *    `@rv/persistence` widens the column, `metadata.status` is deleted and nothing
- *    else changes.
- * 2. `runs` has one `stage` column, because storage modelled a run as executing one
- *    stage. A run requests a *list*. The column holds the currently-executing stage
- *    (or the first requested one, before it starts) and `metadata.requestedStages`
- *    holds the list.
+ * **One remaining impedance mismatch.** `runs` has one `stage` column, because storage
+ * modelled a run as executing one stage. A run requests a *list*. The column holds the
+ * currently-executing stage (or the first requested one, before it starts) and
+ * `metadata.requestedStages` holds the list.
  *
  * Everything the budget guard sums is a real column, so `SELECT sum(cost_nano_usd)`
  * never has to parse JSON - which is the property `usage_records` was designed for and
@@ -21,9 +23,11 @@
  */
 
 import type { IsoInstant, PipelineStageKey, ProjectId, RunId, UsageRecord } from '@rv/contracts';
+import { canTransition } from '@rv/contracts';
 import type { DatabaseHandle, RivayatDatabase } from '@rv/persistence';
 import { runs, usageRecords } from '@rv/persistence';
 import {
+  ConflictError,
   NotFoundError,
   UNIT,
   ValidationError,
@@ -49,25 +53,39 @@ function attempt<T>(message: string, fn: () => T): Result<T> {
   return fromThrowable(fn, (caught) => toAppError(caught, message));
 }
 
-type StoredState = 'queued' | 'running' | 'paused' | 'done' | 'failed';
+/**
+ * What a row written before the column was widened can hold.
+ *
+ * `done` is the only value that is not also a `RunStatus`; the rest overlap. Kept so
+ * an old row still reads back as something the schema accepts instead of failing
+ * validation on load, which would make every historical run un-listable.
+ */
+const LEGACY_COLUMN_STATES: Readonly<Record<string, RunStatus>> = { done: 'succeeded' };
 
-/** Six pipeline states onto the five the column offers. See the file header. */
-const STATE_COLUMN: Readonly<Record<RunStatus, StoredState>> = {
-  queued: 'queued',
-  running: 'running',
-  paused: 'paused',
-  succeeded: 'done',
-  failed: 'failed',
-  cancelled: 'failed',
-};
-
-/** What lives in `metadata` because no column can hold it. */
+/**
+ * What lives in `metadata` because no column can hold it.
+ *
+ * `status` is written for the benefit of a *reader on an older build*, not this one:
+ * the column is authoritative now. It costs a few bytes and it means a rollback does
+ * not silently reinterpret every cancelled run as failed.
+ */
 interface RunMetadata {
   readonly status: RunStatus;
   readonly seriesId: string | null;
   readonly requestedStages: readonly PipelineStageKey[];
   readonly currentStage: PipelineStageKey | null;
   readonly stages: readonly RunStageResult[];
+}
+
+/**
+ * The run's status, preferring whichever source can express `cancelled`.
+ *
+ * `metadata.status` first because a row written by the five-state build has the
+ * canonical value there and the lossy one in the column. For every row written since,
+ * the two agree.
+ */
+function statusOf(row: typeof runs.$inferSelect, metadata: Partial<RunMetadata>): string {
+  return metadata.status ?? LEGACY_COLUMN_STATES[row.state] ?? row.state;
 }
 
 function toRow(run: RunSummary): typeof runs.$inferInsert {
@@ -86,7 +104,7 @@ function toRow(run: RunSummary): typeof runs.$inferInsert {
     id: run.id,
     projectId: run.projectId,
     stage,
-    state: STATE_COLUMN[run.status],
+    state: run.status,
     budgetNanoUsd: run.budgetNanoUsd,
     spentNanoUsd: run.spentNanoUsd,
     seed: run.seed,
@@ -103,7 +121,7 @@ function fromRow(row: typeof runs.$inferSelect): Result<RunSummary> {
     id: row.id,
     projectId: row.projectId,
     seriesId: metadata.seriesId ?? null,
-    status: metadata.status ?? (row.state === 'done' ? 'succeeded' : row.state),
+    status: statusOf(row, metadata),
     requestedStages: metadata.requestedStages ?? [row.stage],
     currentStage: metadata.currentStage ?? null,
     stages: metadata.stages ?? [],
@@ -221,6 +239,17 @@ export class DrizzleRunRepository implements RunRepository {
     return Promise.resolve(ok(summaries));
   }
 
+  /**
+   * Moves the run, and refuses a move the state machine does not have.
+   *
+   * `PIPELINE_STATUS_TRANSITIONS` is enforced here rather than only in the runner
+   * because it is the *storage* invariant that matters: a cancelled run walked back to
+   * `running` by a stage that resolved after the cancel would finish, be billed for,
+   * and be reported as succeeded - and no amount of care in one caller prevents the
+   * next caller from doing it. A move to the state the run is already in is allowed:
+   * every job of a run re-asserts `running`, and treating that as illegal would make
+   * the second stage of every run fail.
+   */
   setStatus(
     id: RunId,
     status: RunStatus,
@@ -291,6 +320,15 @@ export class DrizzleRunRepository implements RunRepository {
     if (current.value === null) return err(new NotFoundError('run', id));
 
     const next = apply(current.value);
+    if (next.status !== current.value.status && !canTransition(current.value.status, next.status)) {
+      return err(
+        new ConflictError({
+          message: `Run ${id} cannot move from ${current.value.status} to ${next.status}`,
+          context: { runId: id, from: current.value.status, to: next.status },
+        }),
+      );
+    }
+
     const written = attempt(`Could not update run ${id}`, () =>
       this.#db.update(runs).set(toRow(next)).where(eq(runs.id, id)).run(),
     );

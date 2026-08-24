@@ -44,7 +44,9 @@ import type {
 } from '../application/ports/repository.ports';
 import type { AppConfig } from '../config/app-config';
 import { loadConfig } from '../config/app-config';
-import type { CostService } from '../cost/cost.service';
+import type { LedgerService } from '../cost/ledger.service';
+import type { DeliveryService } from '../render/delivery.service';
+import { ReframeService } from '../render/reframe.service';
 import {
   StubNarrativeMemory,
   StubRenderEngine,
@@ -108,7 +110,9 @@ describe('controllers propagate a storage failure rather than reporting success'
     await expectFailure(controller.findOne(PROJECT));
     await expectFailure(controller.list());
     await expectFailure(controller.update(PROJECT, { name: 'x' }));
-    await expectFailure(controller.create({ name: 'a', description: 'b', budgetNanoUsd: null }));
+    await expectFailure(
+      controller.create({ name: 'a', description: 'b', locale: 'fa', budgetNanoUsd: null }),
+    );
   });
 
   it('series', async () => {
@@ -139,12 +143,15 @@ describe('controllers propagate a storage failure rather than reporting success'
     const controller = new PipelineController(
       failing<PipelineRunner>(),
       failing<RunRepository>(),
-      failing<CostService>(),
+      failing<LedgerService>(),
+      failing<DeliveryService>(),
     );
     await expectFailure(controller.findOne(RUN));
     await expectFailure(controller.listForProject(PROJECT));
     // The run has to be read before the ledger can be scoped to its project.
     await expectFailure(controller.ledger(RUN));
+    await expectFailure(controller.costReport(PROJECT, {}));
+    await expectFailure(controller.delivery(RUN));
   });
 
   it('settings', async () => {
@@ -177,7 +184,7 @@ describe('controllers over a scaffolded engine refuse in the taxonomy', () => {
   });
 
   it('render start', async () => {
-    const controller = new RenderController(new StubRenderEngine());
+    const controller = new RenderController(new StubRenderEngine(), new ReframeService({ ids }));
     const outcome = await controller.start({
       ir: undefined as never,
       formats: ['yt-1080p'],
@@ -190,7 +197,10 @@ describe('controllers over a scaffolded engine refuse in the taxonomy', () => {
   });
 
   it('render formats needs no engine at all', () => {
-    const outcome = new RenderController(new StubRenderEngine()).formats();
+    const outcome = new RenderController(
+      new StubRenderEngine(),
+      new ReframeService({ ids }),
+    ).formats();
     expect(isErr(outcome)).toBe(false);
     if (isErr(outcome)) return;
     // `FORMAT_PRESETS` is verified data in `@rv/contracts`, not something an engine
@@ -432,7 +442,11 @@ describe('the health check', () => {
     skipped: [{ provider: 'ollama', reason: 'OLLAMA_HOST is not set' }],
   };
   const queue = { driver: 'in-process', peakConcurrency: 0 } as unknown as JobQueue;
-  const runner = { implementedStages: () => ['intake'] } as unknown as PipelineRunner;
+  const runner = {
+    implementedStages: () => ['intake'],
+    stubbedStages: () => ['story'],
+    registeredStages: () => ['intake', 'story'],
+  } as unknown as PipelineRunner;
 
   function open(): DatabaseHandle {
     const opened = createDatabase(':memory:');

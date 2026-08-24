@@ -30,7 +30,22 @@ export const HealthReport = z.object({
   pipeline: z.object({
     implementedStages: z
       .array(z.string())
-      .describe('Stages this build can execute. The rest return 501.'),
+      .describe('Stages this build can actually execute. Everything else returns 501.'),
+    /**
+     * Wired, and refusing. Reported separately because it is a different diagnosis.
+     *
+     * "Stubbed" and "not registered at all" produce the same 501 to a client and need
+     * opposite responses from an operator: one is waiting on an engine package, the
+     * other is a wiring bug in this app.
+     */
+    stubbedStages: z
+      .array(z.string())
+      .default([])
+      .describe('Stages that are registered and return 501, naming the package that owes them.'),
+    registeredStages: z
+      .array(z.string())
+      .default([])
+      .describe('Every stage the registry can route. The union of the two lists above.'),
   }),
 });
 export type HealthReport = z.infer<typeof HealthReport>;

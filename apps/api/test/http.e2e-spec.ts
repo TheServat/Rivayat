@@ -46,15 +46,68 @@ describe('the HTTP surface', () => {
         status: string;
         database: { location: string; reachable: boolean };
         queue: { driver: string };
-        pipeline: { implementedStages: string[] };
+        pipeline: {
+          implementedStages: string[];
+          stubbedStages: string[];
+          registeredStages: string[];
+        };
       };
 
       expect(body.status).toBe('ok');
       expect(body.database).toMatchObject({ location: ':memory:', reachable: true });
       expect(body.queue.driver).toBe('in-process');
-      // Every stage is registered - the unimplemented ones as stubs - so a run that
-      // asks for one fails with a diagnosis instead of hanging on a missing key.
-      expect(body.pipeline.implementedStages).toHaveLength(12);
+
+      // The assertion this replaces was `implementedStages` having length 12, which was
+      // true of the *registry* and false of the build: nine of those handlers return
+      // 501. It is the line that put "All twelve stages report as implemented" into
+      // docs/05-remaining-work.md.
+      expect([...body.pipeline.implementedStages].sort()).toEqual(['intake', 'render', 'resolve']);
+
+      // Every stage is still registered - the unimplemented ones as stubs - so a run
+      // that asks for one fails with a diagnosis instead of hanging on a missing key.
+      expect(body.pipeline.registeredStages).toHaveLength(12);
+      expect(body.pipeline.stubbedStages).toHaveLength(9);
+      expect([...body.pipeline.implementedStages, ...body.pipeline.stubbedStages].sort()).toEqual(
+        [...body.pipeline.registeredStages].sort(),
+      );
+    });
+
+    it('routes a stage it reports as stubbed, and refuses it with the package that owes it', async () => {
+      // The two lists are not decoration: this is the difference they describe. A
+      // stubbed stage is wired, validated and reachable - it just cannot do the work.
+      const health = await request(harness.server).get('/api/health').expect(200);
+      const stubbed = (health.body as { pipeline: { stubbedStages: string[] } }).pipeline
+        .stubbedStages;
+      expect(stubbed).toContain('story');
+
+      const project = await request(harness.server)
+        .post('/api/projects')
+        .send({ name: 'Stub check', description: 'A project that asks for a stubbed stage.' })
+        .expect(201);
+
+      const started = await request(harness.server)
+        .post('/api/runs')
+        .send({
+          projectId: (project.body as { id: string }).id,
+          stages: ['story'],
+          seed: 1,
+          payload: {},
+        })
+        .expect(202);
+
+      const runId = (started.body as { id: string }).id;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const run = (await request(harness.server).get(`/api/runs/${runId}`).expect(200)).body as {
+          status: string;
+          errorCode: string | null;
+        };
+        if (run.status === 'failed') {
+          expect(run.errorCode).toBe('UNSUPPORTED_CAPABILITY');
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error('the stubbed stage never settled');
     });
   });
 

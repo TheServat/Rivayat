@@ -79,6 +79,8 @@ export class HealthController {
       },
       pipeline: {
         implementedStages: [...this.#runner.implementedStages()],
+        stubbedStages: [...this.#runner.stubbedStages()],
+        registeredStages: [...this.#runner.registeredStages()],
       },
     };
   }

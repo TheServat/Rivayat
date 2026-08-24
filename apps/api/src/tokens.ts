@@ -62,6 +62,15 @@ export const COST_SERVICE = 'COST_SERVICE';
  * unguarded, and nothing else would notice.
  */
 export const METERED_CALL_RUNNER = 'METERED_CALL_RUNNER';
+/**
+ * `LedgerService` - the bill, read from `usage_records` rather than from memory.
+ *
+ * A separate token from `COST_SERVICE` because they are separate concerns with
+ * different storage: the guard has to be fast and in-process, the report has to be
+ * durable and cross-process. One token would have made "which one does this read from"
+ * a question about the method name.
+ */
+export const LEDGER_SERVICE = 'LEDGER_SERVICE';
 /** `ResponseCache` - never pay twice for a byte-identical request. */
 export const RESPONSE_CACHE = 'RESPONSE_CACHE';
 
@@ -83,6 +92,13 @@ export const SERIES_REPOSITORY = 'SERIES_REPOSITORY';
 export const EPISODE_REPOSITORY = 'EPISODE_REPOSITORY';
 /** `RunRepository`, declared in this app, over the `runs` table. */
 export const RUN_REPOSITORY = 'RUN_REPOSITORY';
+/**
+ * `RunPayloadStore` - the durable copy of what a run was started with.
+ *
+ * Separate from `RUN_REPOSITORY` because the payload is megabytes of `AnimationIR` and
+ * `RunSummary` is polled by every open progress bar. See the port for the whole story.
+ */
+export const RUN_PAYLOAD_STORE = 'RUN_PAYLOAD_STORE';
 /**
  * `SettingsRepository`, declared by `@rv/settings` and implemented in `@rv/persistence`.
  *
@@ -121,8 +137,39 @@ export const STORY_ENGINE_PORT = 'STORY_ENGINE_PORT';
 export const ASSET_PRODUCTION_PORT = 'ASSET_PRODUCTION_PORT';
 /** `NarrativeMemoryPort` - the graph. Stubbed until `@rv/narrative-memory` exists. */
 export const NARRATIVE_MEMORY_PORT = 'NARRATIVE_MEMORY_PORT';
-/** `RenderPort` - S10/S11. Stubbed until `@rv/render-engine` exists. */
+/** `RenderPort` - the one-shot render/deliver call. S11 is still a stub behind it. */
 export const RENDER_PORT = 'RENDER_PORT';
+/**
+ * `FrameRenderer` map - the backends S10 may draw with, by id.
+ *
+ * A token rather than a construction inside the stage handler so a test can install a
+ * backend that draws something cheap, and so a deployment with no Skia binding fails at
+ * boot with a name rather than at frame 1 of a long render.
+ */
+export const FRAME_RENDERERS = 'FRAME_RENDERERS';
+/** `FfmpegEncoder` over the configured binary paths. */
+export const VIDEO_ENCODER = 'VIDEO_ENCODER';
+/** `FfprobeReader` - what came out, as opposed to what was asked for. */
+export const VIDEO_PROBER = 'VIDEO_PROBER';
+/**
+ * `ReframeService` - one composition to a crop per format, without rendering anything.
+ *
+ * A token of its own rather than a method on the render port because it is pure
+ * geometry: no encoder, no disk, no money, and answerable while the user is still
+ * choosing formats.
+ */
+export const REFRAME_SERVICE = 'REFRAME_SERVICE';
+/** `DeliveryService` - what a run actually put on disk, measured. */
+export const DELIVERY_SERVICE = 'DELIVERY_SERVICE';
+/**
+ * `CompositionStore` - `AnimationIR` by content hash, so a run can name one.
+ *
+ * The studio cannot start a render without a composition and has no way to build one;
+ * this is where the ones that exist live. Content-addressed rather than id-addressed
+ * because ADR-0001 requires a render to be reproducible from its input, and only a hash
+ * cannot point at something else later.
+ */
+export const COMPOSITION_STORE = 'COMPOSITION_STORE';
 
 /**
  * Every port token the app declares.
@@ -147,6 +194,7 @@ export const PORT_TOKENS = [
   CAPABILITY_MATRIX,
   MODEL_ROUTER,
   COST_SERVICE,
+  LEDGER_SERVICE,
   METERED_CALL_RUNNER,
   RESPONSE_CACHE,
 
@@ -158,6 +206,7 @@ export const PORT_TOKENS = [
   SERIES_REPOSITORY,
   EPISODE_REPOSITORY,
   RUN_REPOSITORY,
+  RUN_PAYLOAD_STORE,
   SETTINGS_REPOSITORY,
   MACHINE_SETTINGS,
   STYLE_BIBLE_READER,
@@ -171,6 +220,12 @@ export const PORT_TOKENS = [
   ASSET_PRODUCTION_PORT,
   NARRATIVE_MEMORY_PORT,
   RENDER_PORT,
+  FRAME_RENDERERS,
+  VIDEO_ENCODER,
+  VIDEO_PROBER,
+  REFRAME_SERVICE,
+  DELIVERY_SERVICE,
+  COMPOSITION_STORE,
 ] as const;
 
 export type PortToken = (typeof PORT_TOKENS)[number];

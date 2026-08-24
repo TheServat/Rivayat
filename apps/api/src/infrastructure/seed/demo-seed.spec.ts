@@ -365,9 +365,18 @@ describe('seedDemo', () => {
       if (row === undefined) return;
 
       // Rewind the run to the state a process killed between `create` and `setStatus`
-      // would have left behind.
-      const reopened = await fixture.deps.runs.setStatus(row.id, 'running', row.startedAt);
-      expect(isOk(reopened)).toBe(true);
+      // would have left behind. Written straight to the row rather than through
+      // `setStatus`, because `succeeded -> running` is not a transition the state
+      // machine has - which is the point: a crash does not transition anything, it
+      // simply stops, and the row is left saying `running` with no worker behind it.
+      fixture.database.sqlite
+        .prepare("update runs set state = 'running', finished_at = null where id = ?")
+        .run(row.id);
+      fixture.database.sqlite
+        .prepare(
+          "update runs set metadata = json_set(metadata, '$.status', 'running') where id = ?",
+        )
+        .run(row.id);
 
       const second = await seedDemo(fixture.deps);
       expect(isOk(second)).toBe(true);

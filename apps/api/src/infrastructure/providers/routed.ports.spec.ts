@@ -17,6 +17,10 @@ import {
   ModelRouter,
   type EmbeddingRequest,
   type EmbeddingResult,
+  type ImageCostQuote,
+  type ImageCostRequest,
+  type ImageGenerationRequest,
+  type ImageResult,
   type ProviderAdapter,
   type TextGenerationRequest,
   type TextGenerationResult,
@@ -25,6 +29,7 @@ import type { CompletionRequest, CompletionResponse } from '@rv/prompt-kit';
 import {
   MemoryLogger,
   ProviderError,
+  ZERO_USD,
   createRng,
   isErr,
   ok,
@@ -53,6 +58,8 @@ import {
 const MODEL = 'qwen3.5:latest';
 const REF = `ollama:${MODEL}`;
 const EMBED_MODEL = 'qwen2.5:7b';
+/** Catalogued and free: the local lane, which is a real answer and not a missing price. */
+const IMAGE_MODEL = 'sdxl-turbo';
 
 const ROUTER_CONFIG = {
   projectId: null,
@@ -308,5 +315,88 @@ describe('RegistryEmbeddingAdapter', () => {
 
     const outcome = await registryPort.embed(['anything']);
     expect(isErr(outcome)).toBe(true);
+  });
+});
+
+/**
+ * An image adapter that can price its own calls, which the port now requires.
+ *
+ * `quoteImage` is a *required* member of `ImageGenerationPort` rather than a capability
+ * behind a flag, because a call that cannot be priced before it is made is not a
+ * convenience gap - it is a hole in "the budget guard runs before the call".
+ */
+class FakeImageAdapter implements ProviderAdapter {
+  readonly kind: ProviderKind = 'comfyui';
+  readonly modelRef = `comfyui:${IMAGE_MODEL}`;
+  readonly capabilities: readonly Capability[] = ['image-generation'];
+
+  quotes = 0;
+
+  generateImage(_request: ImageGenerationRequest): Promise<Result<ImageResult, AppError>> {
+    return Promise.resolve(
+      ok({
+        images: [],
+        modelRef: this.modelRef,
+        usage: {
+          tokens: { input: 0, output: 0, cached: 0, reasoning: 0 },
+          images: { count: 1, resolution: null },
+          latencyMs: 5,
+        },
+      }),
+    );
+  }
+
+  quoteImage(_request: ImageCostRequest): ImageCostQuote {
+    this.quotes += 1;
+    return { kind: 'free', modelRef: this.modelRef, nanoUsd: ZERO_USD, reason: 'local inference' };
+  }
+}
+
+describe('RoutedImageGenerationPort.quoteImage', () => {
+  it('prices from the head of the chain the router would actually use', () => {
+    const adapter = new FakeImageAdapter();
+    const port = new RoutedImageGenerationPort(wire([adapter]));
+
+    const quote = port.quoteImage({ size: { width: 512, height: 512 }, count: 1 });
+
+    // Delegated, not invented: the estimate and the invoice must come from the same
+    // pricing record or the guard is checking a number nobody will be billed.
+    expect(adapter.quotes).toBe(1);
+    expect(quote.kind).toBe('free');
+    expect(quote.modelRef).toBe(`comfyui:${IMAGE_MODEL}`);
+  });
+
+  it('answers `unpriced` when nothing can serve an image call, never `free`', () => {
+    // Collapsing "no provider" into a zero would make an unconfigured workspace look
+    // like the cheapest possible one to the budget guard - the most expensive way to be
+    // wrong.
+    const port = new RoutedImageGenerationPort(wire([new FakeOllamaAdapter()]));
+    const quote = port.quoteImage({ count: 1 });
+
+    expect(quote.kind).toBe('unpriced');
+    if (quote.kind !== 'unpriced') return;
+    expect(quote.reason.length).toBeGreaterThan(0);
+    // Deliberately not a real provider: naming one that was never selected would put a
+    // fictional row in the audit trail.
+    expect(quote.modelRef).toBe('unrouted:none');
+  });
+
+  it('answers `unpriced` when the routed model has no adapter behind it', () => {
+    // The router can build a chain - its own matrix knows the model - but the matrix the
+    // *port* consults has nothing registered under that reference. A price cannot be
+    // had, and the quote says so rather than reporting a number from nowhere.
+    const routable = wire([new FakeImageAdapter()]).router;
+    const port = new RoutedImageGenerationPort({
+      router: routable,
+      matrix: new CapabilityMatrix(),
+    });
+
+    const quote = port.quoteImage({ count: 1 });
+
+    expect(quote.kind).toBe('unpriced');
+    if (quote.kind !== 'unpriced') return;
+    // It still names the model it *would* have used, which is what makes the gap
+    // actionable: the operator knows which adapter is missing.
+    expect(quote.modelRef).toBe(`comfyui:${IMAGE_MODEL}`);
   });
 });

@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest';
 
 import { RunSummary } from '../application/resources';
 import { IntakeStageHandler, ResolveStageHandler, STAGE_OWNER, StubStageHandler } from './handlers';
-import type { StageContext } from './stage';
+import type { StageContext, StageProgress } from './stage';
 
 const RUN = 'run_01J0000000000000000000000A' as RunId;
 const STYLE_CHECKSUM = 'a'.repeat(64);
@@ -73,7 +73,7 @@ function context(
   readonly context: StageContext;
   readonly progress: { progress: number; detail?: string }[];
 } {
-  const progress: { progress: number; detail?: string }[] = [];
+  const progress: StageProgress[] = [];
   const run = RunSummary.parse({
     id: RUN,
     projectId: 'prj_01J0000000000000000000000A',
@@ -101,8 +101,8 @@ function context(
         payload,
         attempt: 1,
       },
-      reportProgress: (value, detail) => {
-        progress.push(detail === undefined ? { progress: value } : { progress: value, detail });
+      reportProgress: (update) => {
+        progress.push(update);
       },
       signal: new AbortController().signal,
     },

@@ -285,6 +285,18 @@ export const API_ROUTES: readonly ApiRoute[] = [
   },
   {
     method: 'get',
+    path: '/runs/{id}/delivery',
+    operationId: 'getRunDelivery',
+    summary:
+      'What the run put on disk, probed: size, duration, codec, pixel format, frame ' +
+      'rate, hash, and the verdict against each platform spec.',
+    tags: ['pipeline'],
+    params: [idParam('id', 'Run id, `run_<ULID>`.')],
+    status: 200,
+    response: 'RunDelivery',
+  },
+  {
+    method: 'get',
     path: '/runs/{id}/ledger',
     operationId: 'getRunLedger',
     summary: 'Every provider call this run made, and the four cost summaries.',
@@ -298,6 +310,19 @@ export const API_ROUTES: readonly ApiRoute[] = [
     path: '/runs/{id}/cancel',
     operationId: 'cancelRun',
     summary: 'Stop a run inside its current stage, aborting in-flight provider calls.',
+    tags: ['pipeline'],
+    params: [idParam('id', 'Run id, `run_<ULID>`.')],
+    status: 202,
+    response: 'RunSummary',
+  },
+  {
+    method: 'post',
+    path: '/runs/{id}/resume',
+    operationId: 'resumeRun',
+    summary:
+      'Re-queue a failed or orphaned run from its last checkpoint. 409 for a run that ' +
+      'succeeded or was cancelled - both are terminal, and a new run reuses the ' +
+      'checkpoints anyway.',
     tags: ['pipeline'],
     params: [idParam('id', 'Run id, `run_<ULID>`.')],
     status: 202,
@@ -328,6 +353,27 @@ export const API_ROUTES: readonly ApiRoute[] = [
   },
   {
     method: 'get',
+    path: '/projects/{projectId}/cost',
+    operationId: 'getProjectCost',
+    summary:
+      'What a project - or one series in it - has cost, per run, per stage, per ' +
+      'provider, and per delivered minute.',
+    tags: ['pipeline'],
+    params: [
+      idParam('projectId', 'Project id, `prj_<ULID>`.'),
+      {
+        name: 'seriesId',
+        in: 'query',
+        required: false,
+        description: 'Narrows the report to one series. Omit for the whole project.',
+        schema: { type: 'string' },
+      },
+    ],
+    status: 200,
+    response: 'CostReport',
+  },
+  {
+    method: 'get',
     path: '/projects/{projectId}/runs',
     operationId: 'listProjectRuns',
     summary: 'Every run of a project.',
@@ -338,6 +384,51 @@ export const API_ROUTES: readonly ApiRoute[] = [
   },
 
   // ── render ────────────────────────────────────────────────────────────────
+  // ── compositions ──────────────────────────────────────────────────────────
+  {
+    method: 'post',
+    path: '/compositions',
+    operationId: 'storeComposition',
+    summary:
+      'Store an AnimationIR by content hash. 200, not 201: the id *is* the content, so ' +
+      'storing the same composition twice finds the first one rather than making a second.',
+    tags: ['compositions'],
+    requestBody: 'StoreCompositionBody',
+    status: 200,
+    response: 'CompositionSummary',
+  },
+  {
+    method: 'get',
+    path: '/compositions',
+    operationId: 'listCompositions',
+    summary: 'Every stored composition, newest first. Summaries only - an IR is megabytes.',
+    tags: ['compositions'],
+    status: 200,
+    response: 'CompositionList',
+  },
+  {
+    method: 'get',
+    path: '/compositions/{id}',
+    operationId: 'getComposition',
+    summary: 'One composition, whole, for the renderer and the player.',
+    tags: ['compositions'],
+    params: [idParam('id', 'The composition content hash, 64 hex characters.')],
+    status: 200,
+    response: 'StoredComposition',
+  },
+
+  {
+    method: 'post',
+    path: '/render/reframe',
+    operationId: 'reframeComposition',
+    summary:
+      'Solve a crop per shot per format from the composition alone. No render, no ' +
+      'encoder, no cost - reframing is computed, not re-authored.',
+    tags: ['render'],
+    requestBody: 'ReframeBody',
+    status: 201,
+    response: 'ReframePlanSet',
+  },
   {
     method: 'get',
     path: '/render/formats',

@@ -9,6 +9,7 @@
 
 import { type INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { MachineLayerLoad } from '@rv/settings';
 import type { Logger } from '@rv/shared-kernel';
 
@@ -27,13 +28,38 @@ export interface BootedApp {
 }
 
 /**
- * Applies the global prefix, CORS and shutdown hooks.
+ * How large a request body may be.
+ *
+ * Express defaults to 100 KB, which this API cannot live with: an `AnimationIR` *is* a
+ * request body here. `POST /api/render` takes a whole composition and S10's run payload
+ * carries one, by design and not by accident - ADR-0001 requires a render to be
+ * reproducible from its input alone, so a body that named the IR by id would render
+ * whatever that id points at now. A three-hundred-node test fixture is already 106 KB
+ * and a real episode is far more.
+ *
+ * The failure it produced was doubly bad: the body was refused, and the refusal arrived
+ * as a **500**, because body-parser's error is a plain `Error` carrying a `status`
+ * rather than a Nest `HttpException`. `app-error.filter.ts` now maps it properly, so
+ * this limit is the ceiling rather than the only thing standing between a large
+ * composition and an unexplained internal error.
+ *
+ * 64 MB: generous enough for a feature-length IR, small enough that it is still a limit.
+ */
+const MAX_BODY_BYTES = '64mb';
+
+/**
+ * Applies the body limit, the global prefix, CORS and shutdown hooks.
  *
  * Exported so a `Test.createTestingModule(...).createNestApplication()` - which is the
  * only way to override a provider with a fake - gets exactly the same application as
  * `main.ts`.
  */
-export function configureApp(app: INestApplication, config: AppConfig): void {
+export function configureApp(app: NestExpressApplication, config: AppConfig): void {
+  // Nest's own re-registration, rather than `app.use(express.json(...))`: express is a
+  // transitive dependency of `@nestjs/platform-express`, and importing it directly here
+  // would be this app depending on a package it does not declare.
+  app.useBodyParser('json', { limit: MAX_BODY_BYTES });
+  app.useBodyParser('urlencoded', { limit: MAX_BODY_BYTES, extended: true });
   app.setGlobalPrefix(config.http.globalPrefix);
   app.enableCors({ origin: config.http.corsOrigin, credentials: true });
   // Nest's own hooks: the event bus completes open SSE streams and the queue closes its
@@ -43,7 +69,7 @@ export function configureApp(app: INestApplication, config: AppConfig): void {
 }
 
 export async function createApp(options: BootstrapOptions = {}): Promise<BootedApp> {
-  const app = await NestFactory.create(
+  const app = await NestFactory.create<NestExpressApplication>(
     AppModule.forRoot(options.env === undefined ? {} : { env: options.env }),
     { logger: options.quiet === true ? false : ['error', 'warn', 'log'] },
   );

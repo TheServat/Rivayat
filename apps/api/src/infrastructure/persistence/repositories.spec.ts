@@ -6,17 +6,19 @@
  * index or reject a bad enum, so a repository tested against a stub proves only that
  * the stub agrees with itself.
  *
- * The run repository has the most to prove, because it maps a six-state lifecycle onto
- * a five-state column and a stage *list* onto a single stage column. Those two mappings
- * are the ones a schema change upstream will break, and they are what these assert.
+ * The run repository has the most to prove: it maps a stage *list* onto a single stage
+ * column, it enforces `PIPELINE_STATUS_TRANSITIONS` on every write, and it still has to
+ * read back a row written by the build whose `state` column only had five values. Those
+ * three are what a schema change upstream will break, and they are what these assert.
  */
 
 import { Ids, type IsoInstant, type ProjectId, type RunId, type SeriesId } from '@rv/contracts';
 import { createDatabase, episodes, runs, type DatabaseHandle } from '@rv/persistence';
 import { isErr, toIso, instant } from '@rv/shared-kernel';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { RunSummary, type RunStatus } from '../../application/resources';
+import { RunSummary, type Project, type RunStatus } from '../../application/resources';
 import { DrizzleEpisodeRepository } from './drizzle-episode.repository';
 import { DrizzleRunRepository } from './drizzle-run.repository';
 import { InMemoryProjectRepository, InMemorySeriesRepository } from './in-memory.repositories';
@@ -82,7 +84,7 @@ describe('DrizzleRunRepository', () => {
     expect(found.value).toBeNull();
   });
 
-  it('keeps `cancelled` distinct from `failed` even though the column cannot', async () => {
+  it('keeps `cancelled` distinct from `failed`, in the indexed column', async () => {
     const id = ids.run();
     await repository.create(runFor(id));
 
@@ -91,10 +93,45 @@ describe('DrizzleRunRepository', () => {
 
     const reread = await repository.findById(id);
     if (isErr(reread) || reread.value === null) throw new Error('not found');
-    // The column stores `failed`; `metadata.status` keeps the truth. Losing this is
-    // the difference between "I stopped it" and "it broke" in the UI.
     expect(reread.value.status).toBe('cancelled');
     expect(reread.value.finishedAt).toBe(NOW);
+
+    // In the *column*, not only in `metadata`. This used to be stored as `failed`, so
+    // the index that exists to answer "show me the failed runs" answered it with the
+    // cancelled ones mixed in - which is the difference between "I stopped it" and
+    // "it broke", asked of the one query an operator actually runs.
+    const stored = handle.db.select().from(runs).where(eq(runs.id, id)).all();
+    expect(stored[0]?.state).toBe('cancelled');
+  });
+
+  it('refuses a move the state machine does not have', async () => {
+    const id = ids.run();
+    await repository.create(runFor(id));
+    await repository.setStatus(id, 'running', NOW);
+    await repository.setStatus(id, 'cancelled', NOW, 'CANCELLED');
+
+    // `cancelled` has no outgoing edges. A stage that resolved after the cancel must
+    // not be able to walk the run back to `running` and then bill for finishing it.
+    const revived = await repository.setStatus(id, 'running', NOW);
+    expect(isErr(revived)).toBe(true);
+    if (!isErr(revived)) return;
+    expect(revived.error.kind).toBe('conflict');
+    expect(revived.error.context).toMatchObject({ from: 'cancelled', to: 'running' });
+
+    const reread = await repository.findById(id);
+    if (isErr(reread) || reread.value === null) throw new Error('not found');
+    expect(reread.value.status).toBe('cancelled');
+  });
+
+  it('allows a move to the state the run is already in', async () => {
+    // Every job of a run re-asserts `running`. Treating that as illegal would fail the
+    // second stage of every run that has one.
+    const id = ids.run();
+    await repository.create(runFor(id));
+    await repository.setStatus(id, 'running', NOW);
+
+    const again = await repository.setStatus(id, 'running', NOW);
+    expect(isErr(again)).toBe(false);
   });
 
   it('records the finish time with the terminal status, never separately', async () => {
@@ -121,6 +158,8 @@ describe('DrizzleRunRepository', () => {
       durationMs: 1,
       artifacts: [],
       errorCode: 'VALIDATION_FAILED',
+      inputHash: null,
+      deliveredMs: null,
     });
     await repository.recordStage(id, {
       stage: 'intake',
@@ -129,6 +168,8 @@ describe('DrizzleRunRepository', () => {
       durationMs: 2,
       artifacts: ['brief:idea'],
       errorCode: null,
+      inputHash: 'a'.repeat(64),
+      deliveredMs: 4000,
     });
 
     const found = await repository.findById(id);
@@ -231,39 +272,50 @@ describe('DrizzleRunRepository', () => {
 
   it('reads a row whose metadata predates it, falling back to the columns', async () => {
     // The forward-compatibility case: a row written before `metadata` carried the
-    // stage list. Everything the columns *can* answer must still be answered, because
-    // the alternative is a run that becomes unreadable after a deploy.
+    // stage list, with `done` in a column that no longer offers that value. Written
+    // through raw SQL precisely because the typed schema now refuses it - which is the
+    // point: the row exists on disk and must not become unreadable after a deploy.
     const id = 'run_01J0000000000000000000000A' as RunId;
-    handle.db
-      .insert(runs)
-      .values({
-        id,
-        projectId: PROJECT,
-        stage: 'story',
-        state: 'done',
-        budgetNanoUsd: null,
-        spentNanoUsd: 0,
-        seed: 3,
-        errorCode: null,
-        metadata: {},
-        startedAt: NOW,
-        finishedAt: NOW,
-      })
-      .run();
+    handle.sqlite
+      .prepare(
+        'insert into runs (id, project_id, stage, state, budget_nano_usd, spent_nano_usd, ' +
+          'seed, error_code, metadata, started_at, finished_at) ' +
+          "values (?, ?, 'story', 'done', null, 0, 3, null, '{}', ?, ?)",
+      )
+      .run(id, PROJECT, NOW, NOW);
 
     const found = await repository.findById(id);
     if (isErr(found) || found.value === null) throw new Error('not found');
 
-    // `done` is the column's spelling of `succeeded`.
+    // `done` was the old column's spelling of `succeeded`.
     expect(found.value.status).toBe('succeeded');
     expect(found.value.requestedStages).toEqual(['story']);
     expect(found.value.seriesId).toBeNull();
     expect(found.value.stages).toEqual([]);
   });
 
-  it('maps a paused run onto the column without losing it', async () => {
+  it('prefers the metadata status of a legacy row, which is the only place `cancelled` survived', async () => {
+    // A run cancelled by the five-state build stored `failed` in the column and
+    // `cancelled` in metadata. There is no migration that can recover the distinction
+    // from the column, so the reader keeps preferring metadata.
+    const id = 'run_01J0000000000000000000000B' as RunId;
+    handle.sqlite
+      .prepare(
+        'insert into runs (id, project_id, stage, state, budget_nano_usd, spent_nano_usd, ' +
+          'seed, error_code, metadata, started_at, finished_at) ' +
+          "values (?, ?, 'story', 'failed', null, 0, 3, 'CANCELLED', ?, ?, ?)",
+      )
+      .run(id, PROJECT, JSON.stringify({ status: 'cancelled' }), NOW, NOW);
+
+    const found = await repository.findById(id);
+    if (isErr(found) || found.value === null) throw new Error('not found');
+    expect(found.value.status).toBe('cancelled');
+  });
+
+  it('holds a paused run without a finish time', async () => {
     const id = ids.run();
     await repository.create(runFor(id));
+    await repository.setStatus(id, 'running', NOW);
     const paused = await repository.setStatus(id, 'paused', NOW);
     if (isErr(paused)) throw paused.error;
 
@@ -404,10 +456,11 @@ describe('DrizzleEpisodeRepository', () => {
 describe('the in-memory repositories, pending their tables', () => {
   it('refuses to create a project twice under the same id', async () => {
     const repository = new InMemoryProjectRepository();
-    const project = {
+    const project: Project = {
       id: PROJECT,
       name: 'A',
       description: 'B',
+      locale: 'fa',
       styleBibleId: null,
       budgetNanoUsd: null,
       createdAt: NOW,
@@ -427,6 +480,7 @@ describe('the in-memory repositories, pending their tables', () => {
       id: PROJECT,
       name: 'A',
       description: 'B',
+      locale: 'fa',
       styleBibleId: null,
       budgetNanoUsd: null,
       createdAt: NOW,

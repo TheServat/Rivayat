@@ -69,3 +69,15 @@ export type StartRunBody = z.infer<typeof StartRunBody>;
 
 export const RunIdParam = RunId;
 export const ProjectIdParam = ProjectId;
+
+/**
+ * The optional narrowing on `GET /api/projects/:projectId/cost`.
+ *
+ * A schema rather than a raw string for the same reason a path parameter gets one:
+ * `SeriesId` is a branded `ser_<ULID>`, and a handler that accepted any string would
+ * silently return the whole project's report for a typo.
+ */
+export const CostReportQuery = z.object({
+  seriesId: SeriesId.optional(),
+});
+export type CostReportQuery = z.infer<typeof CostReportQuery>;

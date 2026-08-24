@@ -597,6 +597,7 @@ export async function seedDemo(deps: DemoSeedDeps): Promise<Result<DemoSeedRepor
       name: 'حکایت‌های باغ انار',
       description:
         'یک مجموعهٔ کوتاه بر پایهٔ افسانه‌های شفاهی کویر: باغی دیواربسته، چاهی که کسی حق برداشتن از آن را ندارد، و سه نفر که هر کدام بخشی از حقیقت را می‌دانند. این پروژه نمونهٔ آماده‌ای است تا استودیو از روز اول خالی نباشد.',
+      locale: 'fa',
       budgetNanoUsd: null,
     });
     if (isErr(created)) return created;
@@ -747,10 +748,15 @@ export async function seedDemo(deps: DemoSeedDeps): Promise<Result<DemoSeedRepor
   // The project points at its locked style once there is one. Guarded, so the second run
   // does not write a row that already says this.
   if (project.styleBibleId === null) {
+    // A fresh read, not the `now` captured at the top of this function. That one was
+    // taken *before* `CreateProjectUseCase` stamped its own `createdAt`, so reusing it
+    // here wrote `updatedAt` 346 ms earlier than `createdAt` - which `Project`'s
+    // `updatedAt >= createdAt` refinement then rejected on read, and the seeded demo
+    // silently vanished from `GET /api/projects` with one warning in the log.
     const updated = await deps.projects.update(
       DEMO_PROJECT_ID,
       { styleBibleId: DEMO_STYLE_BIBLE_ID },
-      now,
+      toIso(deps.clock.now()),
     );
     if (isErr(updated)) return updated;
     wrote = true;

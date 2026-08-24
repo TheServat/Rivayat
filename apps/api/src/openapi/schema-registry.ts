@@ -22,6 +22,15 @@ import {
 import type { z } from 'zod';
 
 import { Project, RunSummary, SeriesCard } from '../application/resources';
+import { CostReport } from '../cost/cost-report';
+import {
+  CompositionList,
+  CompositionSummary,
+  StoreCompositionBody,
+  StoredComposition,
+} from '../modules/compositions/compositions.contracts';
+import { RunDelivery } from '../render/delivery.contracts';
+import { ReframeBody, ReframePlanSet } from '../render/reframe.contracts';
 import { ErrorEnvelope } from '../common/error-envelope';
 import { ResolveAssetsBody, SearchAssetsBody } from '../modules/assets/assets.contracts';
 import { HealthReport } from '../modules/health/health.contracts';
@@ -72,10 +81,20 @@ export const API_SCHEMAS = {
   RunSummary,
   RunEvent,
   CostLedger,
+  CostReport,
 
   // render
   RenderBody,
   FormatProfile,
+  ReframeBody,
+  ReframePlanSet,
+  RunDelivery,
+
+  // compositions
+  StoreCompositionBody,
+  CompositionSummary,
+  CompositionList,
+  StoredComposition,
 
   // settings
   SettingsSnapshot,

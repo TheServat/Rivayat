@@ -18,7 +18,9 @@
 
 import {
   IsoInstant,
+  Label,
   NanoUsdAmount,
+  NonEmptyString,
   NonNegativeInt,
   PipelineStageKey,
   Prose,
@@ -26,6 +28,28 @@ import {
   Unit01,
 } from '@rv/contracts';
 import { z } from 'zod';
+
+/**
+ * The unit of work a stage is on right now, structured.
+ *
+ * `detail` next to it is prose for a human; this is for the UI. "The current asset
+ * within the produce stage" is a list row that has to be found, highlighted and shown
+ * with a counter - none of which a client can do by parsing a sentence, and all of
+ * which break the moment the sentence is translated. S6 sets `kind: 'asset'` with the
+ * semantic key; S10 sets `kind: 'frame'` with the frame index. Both are "which one of
+ * the N things is happening", which is the only question a progress list asks.
+ */
+export const ProgressItem = z.strictObject({
+  kind: Label.describe('What sort of unit: "asset", "frame", "shot", "format".'),
+  key: NonEmptyString.max(200).describe(
+    'Identity of the unit, stable across a resume - a semantic key, a frame index, a format id.',
+  ),
+  /** 0-based position in the batch. `null` when the stage cannot order its work. */
+  index: NonNegativeInt.nullable().default(null),
+  /** Units in the batch. `null` when the stage does not know until it finishes. */
+  total: NonNegativeInt.nullable().default(null),
+});
+export type ProgressItem = z.infer<typeof ProgressItem>;
 
 const base = {
   runId: RunId,
@@ -47,6 +71,8 @@ export const StageProgressEvent = z.strictObject({
   /** 0..1. A stage that cannot estimate reports 0 rather than lying about a fraction. */
   progress: Unit01,
   detail: Prose.nullable().default(null),
+  /** Which unit of work is in flight. `null` for a stage whose work is not a batch. */
+  item: ProgressItem.nullable().default(null),
 });
 
 export const StageCompletedEvent = z.strictObject({

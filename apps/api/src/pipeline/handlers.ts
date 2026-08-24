@@ -1,7 +1,7 @@
 /**
  * The stage handlers this app can actually run today, and honest stubs for the rest.
  *
- * Two stages have engine-free implementations and are wired for real:
+ * Three stages are wired for real. Two of them are engine-free and live here:
  *
  * - **S0 Intake** validates the brief the run was started with against `Brief` from
  *   `@rv/contracts`. That is the whole of S0 - "free text to a `Brief`" - for a brief
@@ -11,7 +11,11 @@
  *   the user approves before money moves, and it is fully implemented in
  *   `@rv/asset-registry` today.
  *
- * The other ten are bound to {@link StubStageHandler}, which returns the same 501 the
+ * The third is **S10 Render**, which is not engine-free at all - it drives
+ * `RunRenderJobUseCase` over the Skia backend and FFmpeg - and therefore lives in
+ * `render/render-stage.handler.ts` rather than here.
+ *
+ * The other nine are bound to {@link StubStageHandler}, which returns the same 501 the
  * engine ports do, naming the package that owes the work. That is what makes the
  * wiring testable: a run of `[intake, resolve]` completes end to end, and a run that
  * asks for `story` fails with a diagnosis rather than a hang.
@@ -44,6 +48,9 @@ export const STAGE_OWNER: Readonly<Record<PipelineStageKey, string>> = {
   sequence: '@rv/story-engine',
   choreograph: '@rv/anim-engine',
   preview: '@rv/anim-engine',
+  // Implemented - see `render/render-stage.handler.ts`. Kept in the table because the
+  // table is total over the stage union, which is what makes adding a stage a compile
+  // error here rather than a missing message at runtime.
   render: '@rv/render-engine',
   deliver: '@rv/render-engine',
 };
@@ -58,16 +65,17 @@ export const STAGE_OWNER: Readonly<Record<PipelineStageKey, string>> = {
  */
 export class IntakeStageHandler implements StageHandler {
   readonly stage = 'intake' as const;
+  readonly implemented = true;
 
   execute(context: StageContext): Promise<Result<StageOutput, AppError>> {
-    context.reportProgress(0.1, 'validating the brief');
+    context.reportProgress({ progress: 0.1, detail: 'validating the brief' });
 
     const parsed = Brief.safeParse(context.job.payload.brief);
     if (!parsed.success) {
       return Promise.resolve(err(toValidationError(parsed.error, 'run.brief')));
     }
 
-    context.reportProgress(1, `accepted a ${parsed.data.kind} brief`);
+    context.reportProgress({ progress: 1, detail: `accepted a ${parsed.data.kind} brief` });
     return Promise.resolve(ok({ artifacts: [`brief:${parsed.data.kind}`] }));
   }
 }
@@ -89,6 +97,7 @@ interface ResolvePayload {
  */
 export class ResolveStageHandler implements StageHandler {
   readonly stage = 'resolve' as const;
+  readonly implemented = true;
   readonly #useCase: ResolveAssetDemandUseCase;
 
   constructor(useCase: ResolveAssetDemandUseCase) {
@@ -108,7 +117,10 @@ export class ResolveStageHandler implements StageHandler {
       );
     }
 
-    context.reportProgress(0.2, `resolving ${String(payload.specs.length)} specs`);
+    context.reportProgress({
+      progress: 0.2,
+      detail: `resolving ${String(payload.specs.length)} specs`,
+    });
 
     const plan = await this.#useCase.execute({
       specs: payload.specs,
@@ -121,10 +133,12 @@ export class ResolveStageHandler implements StageHandler {
     });
     if (isErr(plan)) return plan;
 
-    context.reportProgress(
-      1,
-      `${String(plan.value.hitCount)} already in the library, ${String(plan.value.missCount)} to generate`,
-    );
+    context.reportProgress({
+      progress: 1,
+      detail:
+        `${String(plan.value.hitCount)} already in the library, ` +
+        `${String(plan.value.missCount)} to generate`,
+    });
     return ok({
       artifacts: [
         `asset-demand-plan:${String(plan.value.hitCount)}/${String(plan.value.missCount)}`,
@@ -141,6 +155,8 @@ export class ResolveStageHandler implements StageHandler {
  */
 export class StubStageHandler implements StageHandler {
   readonly stage: PipelineStageKey;
+  /** The declaration. Everything a stub is, in one field the health endpoint can read. */
+  readonly implemented = false;
 
   constructor(stage: PipelineStageKey) {
     this.stage = stage;

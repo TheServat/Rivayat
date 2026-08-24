@@ -12,7 +12,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import type { Locale, ProjectId } from '@rv/contracts';
+import type { ProjectId } from '@rv/contracts';
 import { isErr, ok, type Result } from '@rv/shared-kernel';
 
 import type {
@@ -33,17 +33,6 @@ export interface ProjectSummaryDeps {
   readonly runs: RunRepository;
   readonly styles: StyleBibleReader;
 }
-
-/**
- * The interface language, until a project can choose one.
- *
- * **Report:** `Project` has no `locale`, so every row claims the studio default. That is
- * honest today - nothing in the pipeline reads a per-project locale - and it is a real
- * gap the moment a Persian series and an English one share an installation. It belongs
- * on `Project` in `@rv/contracts`, alongside the `Project` schema that does not exist
- * yet.
- */
-const ASSUMED_LOCALE: Locale = 'fa';
 
 @Injectable()
 export class ProjectSummaryService {
@@ -90,7 +79,7 @@ export class ProjectSummaryService {
         // rather than a logline; the list shows the first 400 characters of it and the
         // detail screen shows the rest.
         logline: project.description.slice(0, 400),
-        locale: ASSUMED_LOCALE,
+        locale: project.locale,
         styleBibleId: project.styleBibleId,
         styleLocked: locked.value,
         episodeCount: episodeCount.value,

@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { Ids } from '@rv/contracts';
 
@@ -81,7 +82,7 @@ export async function bootHarness(options: HarnessOptions = {}): Promise<Harness
   if (options.override !== undefined) builder = options.override(builder);
 
   const moduleRef = await builder.compile();
-  const app = moduleRef.createNestApplication({ logger: false });
+  const app = moduleRef.createNestApplication<NestExpressApplication>({ logger: false });
 
   const config = app.get<AppConfig>(APP_CONFIG);
   configureApp(app, config);
@@ -91,7 +92,7 @@ export async function bootHarness(options: HarnessOptions = {}): Promise<Harness
     app,
     config,
     ids: new Ids(),
-    server: app.getHttpServer() as Server,
+    server: app.getHttpServer(),
     close: async () => {
       await app.close();
       rmSync(workspace, { recursive: true, force: true });
