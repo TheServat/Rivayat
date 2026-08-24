@@ -12,6 +12,9 @@ import {
   FocusTarget,
   MusicCue,
   ParallaxDepth,
+  irDepthFor,
+  paintDepthFor,
+  parallaxContradictsPaintOrder,
   SHOT_FRAMINGS,
   SceneSpace,
   SfxCue,
@@ -83,6 +86,86 @@ describe('ParallaxDepth', () => {
     expect(ParallaxDepth.safeParse(-1).success).toBe(false);
     expect(ParallaxDepth.safeParse(101).success).toBe(false);
     expect(ParallaxDepth.safeParse(0.01).success).toBe(true);
+  });
+
+  it('converts exactly to the IR depth the parallax behaviour reads', () => {
+    // The focal plane is the origin of the IR's scale, so it converts to zero and the
+    // behaviour leaves it alone - a layer that moves with the camera exactly.
+    expect(irDepthFor(1)).toBe(0);
+    // Farther lags: at depth 2 the layer travels half the pan, which under the linear
+    // fall-off is half the far plane.
+    expect(irDepthFor(2)).toBe(50);
+    expect(irDepthFor(4)).toBe(75);
+    // Nearer over-travels, and this is the half that was unrepresentable while
+    // `parallaxFactor` clamped a negative depth to the camera plane.
+    expect(irDepthFor(0.5)).toBe(-100);
+    expect(irDepthFor(0.25)).toBe(-300);
+  });
+
+  it('maps the whole declared range, which is why the near half must not clamp', () => {
+    // Every value the schema admits gets a distinct, finite IR depth. A conversion that
+    // collapsed part of its own input range would be a promise this field cannot keep.
+    const depths = [0.01, 0.5, 1, 2, 100].map((value) => irDepthFor(ParallaxDepth.parse(value)));
+    expect(new Set(depths).size).toBe(depths.length);
+    expect(depths.every((depth) => Number.isFinite(depth))).toBe(true);
+  });
+
+  it('preserves order: a farther plane is always a larger depth', () => {
+    const samples = [0.01, 0.1, 0.5, 0.9, 1, 1.5, 3, 10, 100];
+    const depths = samples.map((value) => irDepthFor(value));
+    for (let index = 1; index < depths.length; index += 1) {
+      const here = depths[index];
+      const before = depths[index - 1];
+      if (here === undefined || before === undefined) throw new Error('sample');
+      expect(here, String(samples[index])).toBeGreaterThan(before);
+    }
+  });
+});
+
+describe('paint order versus parallax', () => {
+  function band(z: number, entries: readonly (readonly [string, number])[]): unknown {
+    return ShotLayer.parse({
+      z,
+      instances: entries.map(([name, depth]) => ({ ...instance, instance: name, depth })),
+    });
+  }
+
+  // The two count in opposite directions - `z` ascends from the back, `depth` counts away
+  // from the camera - and feeding one into the other inverts the scene silently.
+  it('turns the furthest-back band into the largest depth', () => {
+    expect(paintDepthFor(0, 3)).toBe(2);
+    expect(paintDepthFor(1, 3)).toBe(1);
+    expect(paintDepthFor(2, 3)).toBe(0);
+  });
+
+  it('reports nothing when the two orderings agree', () => {
+    const layers = [band(0, [['sky', 8]]), band(1, [['hero', 1]])] as ShotLayer[];
+    expect(parallaxContradictsPaintOrder(layers)).toEqual([]);
+  });
+
+  it('names the pair when a foreground band travels slower than a background one', () => {
+    // Not expressible in an IR: one `depth` cannot be both smaller (paints later) and
+    // larger (travels less) than another. Detected rather than silently resolved, because
+    // a wrong paint order is a broken frame and a wrong travel rate is a subtle error.
+    const layers = [band(0, [['sky', 2]]), band(1, [['hero', 9]])] as ShotLayer[];
+    expect(parallaxContradictsPaintOrder(layers)).toEqual([{ nearer: 'hero', farther: 'sky' }]);
+  });
+
+  it('treats equal parallax across two bands as a contradiction too', () => {
+    // Two bands at one travel rate collapse onto one depth, and then paint order is
+    // decided by authored node order rather than by the bands the author wrote.
+    const layers = [band(0, [['sky', 3]]), band(1, [['hero', 3]])] as ShotLayer[];
+    expect(parallaxContradictsPaintOrder(layers)).toHaveLength(1);
+  });
+
+  it('says nothing about instances inside one band', () => {
+    const layers = [
+      band(0, [
+        ['sky', 8],
+        ['hill', 3],
+      ]),
+    ] as ShotLayer[];
+    expect(parallaxContradictsPaintOrder(layers)).toEqual([]);
   });
 });
 

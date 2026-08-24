@@ -50,6 +50,7 @@ import { AssetId, AssetVersionId, BeatId, ShotId, VariantId } from '../primitive
 // shot, so the enum is the asset library's and this file borrows it rather than
 // growing a second one that would drift.
 import { AssetRef, LoopMode, PinnedAssetRef, pinsRef } from '../asset/asset';
+import { DEPTH_FAR_PLANE } from '../asset/representation';
 import { DeliveryAspect, DialogueLine } from './story-bible';
 
 // ── placement ───────────────────────────────────────────────────────────────
@@ -142,7 +143,9 @@ export type AssetInstance = z.infer<typeof AssetInstance>;
 export const ShotLayer = z.strictObject({
   z: NonNegativeInt.describe(
     'Paint order. 0 is painted first and is therefore furthest back; higher numbers ' +
-      'paint over lower ones. Unique within the shot.',
+      'paint over lower ones. Unique within the shot. Note this ascends the opposite ' +
+      'way to `AnimNode.depth`, which counts *away* from the camera - see ' +
+      '`paintDepthFor` for the conversion.',
   ),
   name: Label.optional().describe(
     'What this band is, e.g. "far background", "foreground occluders". For humans only.',
@@ -153,6 +156,105 @@ export const ShotLayer = z.strictObject({
     .describe('The assets placed in this band. A band with nothing in it should not exist.'),
 });
 export type ShotLayer = z.infer<typeof ShotLayer>;
+
+// ── compiling a layout into an IR ───────────────────────────────────────────
+
+/**
+ * A shot's two depth fields, and the one field the IR has for them.
+ *
+ * This is written down here rather than left to a compiler to work out, because there
+ * are two plausible answers and only one of them is right.
+ *
+ * A shot separates **how fast a thing travels** ({@link ParallaxDepth}, on the instance)
+ * from **what paints over what** ({@link ShotLayer}`.z`, on the band). `AnimNode.depth`
+ * in `anim/ir.ts` is a single number serving both: the `parallax` behaviour reads it as a
+ * distance, and the renderer sorts on it. So a compiler has to reconcile them, and the
+ * two conversions below are the halves of that reconciliation.
+ *
+ * They also count in **opposite directions**, which is the trap. `z` ascends from the
+ * furthest back; `depth` counts away from the camera, so it ascends towards the back.
+ * Feeding `z` straight into `depth` inverts the whole scene, and nothing downstream would
+ * say so - the picture is simply wrong way round.
+ */
+
+/**
+ * {@link ParallaxDepth} to `AnimNode.depth`, exactly.
+ *
+ * `ParallaxDepth` is a divisor: a layer at `d` travels `pan / d` across the frame. The
+ * `parallax` behaviour with the `linear` fall-off gives a layer at `depth` a travel of
+ * `pan * (1 - depth / DEPTH_FAR_PLANE)`. Equating the two is this function, and it is an
+ * exact inverse over the **whole** declared range of `ParallaxDepth`, 0.01 to 100:
+ *
+ * | `ParallaxDepth` | meaning              | `depth`  | travel   |
+ * | --------------- | -------------------- | -------- | -------- |
+ * | 0.5             | nearer, over-travels | -100     | 2 x pan  |
+ * | 1               | the focal plane      | 0        | pan      |
+ * | 2               | farther, lags        | 50       | pan / 2  |
+ * | 100             | practically fixed    | 99       | pan / 100|
+ *
+ * That the near half maps at all is why `parallaxFactor` saturates on one side only.
+ * While it clamped negative depth to zero, every `ParallaxDepth` below 1 collapsed onto
+ * the focal plane and the field's own docstring - "below 1 is nearer and over-travels" -
+ * was a promise nothing could keep.
+ *
+ * The result is deliberately **not** an integer and not clamped: it is a scene-space
+ * distance, and rounding it would quantise the travel rates of a stack of layers into
+ * each other.
+ */
+export function irDepthFor(parallax: ParallaxDepth): number {
+  return DEPTH_FAR_PLANE * (1 - 1 / parallax);
+}
+
+/**
+ * `ShotLayer.z` to the `AnimNode.depth` that reproduces the same paint order.
+ *
+ * The negation, and nothing more. `bandCount` is required rather than inferred because
+ * the answer depends on it: band 0 must come out *furthest* (largest depth), so the
+ * conversion needs to know how many bands there are to count down from.
+ */
+export function paintDepthFor(z: number, bandCount: number): number {
+  return bandCount - 1 - z;
+}
+
+/**
+ * Instances whose parallax ordering contradicts their band ordering.
+ *
+ * The reconciliation above has a hole, and this is it rather than a silent guess. A
+ * background band travelling *faster* than a foreground band is expressible in a shot
+ * and not expressible in an IR: one `depth` cannot be both larger (paints first) and
+ * smaller (travels more) than another. Something has to give, and the choice is not the
+ * compiler's to make quietly - a wrong paint order is a visibly broken frame (a
+ * character behind a wall), while a wrong travel rate is a subtle parallax error, so the
+ * two are not interchangeable.
+ *
+ * So: a compiler calls this first. An empty result means the two orderings agree and
+ * `irDepthFor` alone is sufficient. A non-empty result is a shot that needs an author's
+ * decision, and it names the pairs so the message can say which.
+ *
+ * The alternative - a scheme that interleaves band offsets with parallax offsets - was
+ * considered and rejected: it needs a band spacing larger than the parallax range, and
+ * the parallax range is unbounded on the near side, so no such spacing exists. If shots
+ * that genuinely need both become common, the answer is a separate paint-order field on
+ * the IR node, which is a decision rather than an extension.
+ */
+export function parallaxContradictsPaintOrder(
+  layers: readonly ShotLayer[],
+): readonly { readonly nearer: AssetInstanceKey; readonly farther: AssetInstanceKey }[] {
+  const placed = layers.flatMap((layer) =>
+    layer.instances.map((instance) => ({ z: layer.z, instance })),
+  );
+
+  const conflicts: { nearer: AssetInstanceKey; farther: AssetInstanceKey }[] = [];
+  for (const front of placed) {
+    for (const back of placed) {
+      // Strictly in front by paint order, but at least as far away by parallax.
+      if (front.z <= back.z) continue;
+      if (front.instance.depth < back.instance.depth) continue;
+      conflicts.push({ nearer: front.instance.instance, farther: back.instance.instance });
+    }
+  }
+  return conflicts;
+}
 
 // ── format-agnostic authoring ───────────────────────────────────────────────
 

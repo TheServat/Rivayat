@@ -23,6 +23,8 @@ import {
   SpriteSheet,
   isPinnedAssetRef,
   pinsRef,
+  representationsOf,
+  servesRepresentation,
 } from './asset';
 import { QualityTier } from '../provider/capability';
 
@@ -394,15 +396,47 @@ describe('AssetRef and PinnedAssetRef', () => {
   });
 
   it('accepts a resolution that only fills in the version', () => {
-    expect(pinsRef({ assetId }, { assetId, versionId })).toBe(true);
+    expect(
+      pinsRef(
+        { assetId, representation: 'cutout' },
+        { assetId, versionId, representation: 'cutout' },
+      ),
+    ).toBe(true);
   });
 
   it('rejects a resolution that changes the asset, the variant, or a frozen version', () => {
-    expect(pinsRef({ assetId }, { assetId: ids.asset(), versionId })).toBe(false);
     expect(
-      pinsRef({ assetId, variantKey: 'winter' }, { assetId, versionId, variantKey: 'summer' }),
+      pinsRef(
+        { assetId, representation: 'cutout' },
+        { assetId: ids.asset(), versionId, representation: 'cutout' },
+      ),
     ).toBe(false);
-    expect(pinsRef({ assetId, versionId }, { assetId, versionId: ids.assetVersion() })).toBe(false);
+    expect(
+      pinsRef(
+        { assetId, variantKey: 'winter', representation: 'cutout' },
+        { assetId, versionId, variantKey: 'summer', representation: 'cutout' },
+      ),
+    ).toBe(false);
+    expect(
+      pinsRef(
+        { assetId, versionId, representation: 'cutout' },
+        { assetId, versionId: ids.assetVersion(), representation: 'cutout' },
+      ),
+    ).toBe(false);
+  });
+
+  it('refuses a resolution that swaps the representation, which is authored and not resolved', () => {
+    expect(
+      pinsRef(
+        { assetId, representation: 'layered-2.5d' },
+        { assetId, versionId, representation: 'flat' },
+      ),
+    ).toBe(false);
+  });
+
+  it('fills the representation in on both forms, so a document parsed today carries the answer', () => {
+    expect(AssetRef.parse({ assetId }).representation).toBe('cutout');
+    expect(PinnedAssetRef.parse({ assetId, versionId }).representation).toBe('cutout');
   });
 });
 
@@ -500,6 +534,179 @@ describe('AssetVersion internal references', () => {
 
   it('leaves an unrigged version alone - rigging happens after matting', () => {
     expect(AssetVersion.safeParse(version()).success).toBe(true);
+  });
+
+  // ── representations ─────────────────────────────────────────────────────────
+
+  function rigged(): Record<string, unknown> {
+    return rigBindingPart(partId);
+  }
+
+  function rigIdOf(skeleton: Record<string, unknown>): string {
+    return String(skeleton.id);
+  }
+
+  it('accepts a cutout representation that names this version’s rig and parts', () => {
+    const skeleton = rigged();
+    const result = AssetVersion.safeParse(
+      version({
+        rig: skeleton,
+        representations: [{ kind: 'cutout', rigId: rigIdOf(skeleton), partIds: [partId] }],
+      }),
+    );
+    expect(result.success, result.success ? '' : z.prettifyError(result.error)).toBe(true);
+  });
+
+  it('rejects a cutout representation bound to a rig this version was never fitted with', () => {
+    const result = AssetVersion.safeParse(
+      version({
+        rig: rigged(),
+        representations: [{ kind: 'cutout', rigId: ids.rig(), partIds: [partId] }],
+      }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join('.'))).toContain(
+      'representations.0.rigId',
+    );
+  });
+
+  it('rejects a cutout representation on a version that has no rig at all', () => {
+    const result = AssetVersion.safeParse(
+      version({ representations: [{ kind: 'cutout', rigId: ids.rig(), partIds: [partId] }] }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a cutout representation that draws a part matting never produced', () => {
+    const skeleton = rigged();
+    const result = AssetVersion.safeParse(
+      version({
+        rig: skeleton,
+        representations: [{ kind: 'cutout', rigId: rigIdOf(skeleton), partIds: [ids.part()] }],
+      }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join('.'))).toContain(
+      'representations.0.partIds',
+    );
+  });
+
+  it('rejects two answers to "draw it as a flat", which nothing downstream could choose between', () => {
+    const flat = {
+      kind: 'flat',
+      imageHash: HASHES.a,
+      size: { width: 1024, height: 1024 },
+    };
+    const result = AssetVersion.safeParse(
+      version({ representations: [flat, { ...flat, imageHash: HASHES.b }] }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join('.'))).toContain(
+      'representations.1.kind',
+    );
+  });
+
+  it('accepts several *different* representations of one version', () => {
+    const skeleton = rigged();
+    const result = AssetVersion.safeParse(
+      version({
+        rig: skeleton,
+        representations: [
+          { kind: 'flat', imageHash: HASHES.a, size: { width: 1024, height: 1024 } },
+          { kind: 'cutout', rigId: rigIdOf(skeleton), partIds: [partId] },
+        ],
+      }),
+    );
+    expect(result.success, result.success ? '' : z.prettifyError(result.error)).toBe(true);
+  });
+});
+
+// ── what an undeclared version can be served as ──────────────────────────────
+
+describe('representationsOf', () => {
+  const partId = ids.part();
+
+  function part(): Record<string, unknown> {
+    return {
+      id: partId,
+      name: 'trunk',
+      role: 'trunk',
+      imageHash: HASHES.a,
+      bounds: { x: 0, y: 0, width: 100, height: 400 },
+      size: { width: 100, height: 400 },
+      zOrder: 0,
+      alphaCoverage: 0.4,
+    };
+  }
+
+  function version(overrides: Record<string, unknown> = {}): AssetVersion {
+    return AssetVersion.parse({
+      id: ids.assetVersion(),
+      assetId: ids.asset(),
+      ordinal: 1,
+      status: 'ready',
+      styleBibleId: ids.styleBible(),
+      styleChecksum: HASHES.a,
+      parts: [part()],
+      canvas: { width: 1024, height: 1024 },
+      nominalHeight: 512,
+      quality: 'preview',
+      provenance: provenance(),
+      ...overrides,
+    });
+  }
+
+  function riggedTo(boundPartId: string): Record<string, unknown> {
+    const skeleton = rig() as unknown as { bones: Record<string, unknown>[] };
+    const [root, ...rest] = skeleton.bones;
+    return { ...skeleton, bones: [{ ...root, partIds: [boundPartId] }, ...rest] };
+  }
+
+  it('returns exactly what a version declares, and derives nothing on top of it', () => {
+    const declared = version({
+      previewImageHash: HASHES.b,
+      rig: riggedTo(partId),
+      representations: [{ kind: 'flat', imageHash: HASHES.a, size: { width: 8, height: 8 } }],
+    });
+    expect(representationsOf(declared).map((each) => each.kind)).toEqual(['flat']);
+  });
+
+  it('honours an explicitly empty declaration, which means "this cannot be drawn yet"', () => {
+    const nothing = version({ rig: riggedTo(partId), representations: [] });
+    expect(representationsOf(nothing)).toEqual([]);
+    expect(servesRepresentation(nothing, 'cutout')).toBe(false);
+  });
+
+  it('reads a rigged version as a cutout, because it has a rig and not because it was assumed', () => {
+    const legacy = version({ rig: riggedTo(partId) });
+    const derived = representationsOf(legacy);
+    expect(derived.map((each) => each.kind)).toEqual(['cutout']);
+    expect(derived.at(0)).toMatchObject({ partIds: [partId] });
+    expect(servesRepresentation(legacy, 'cutout')).toBe(true);
+    expect(servesRepresentation(legacy, 'layered-2.5d')).toBe(false);
+  });
+
+  it('reads a flattened preview as a flat, at the version’s own canvas size', () => {
+    const previewed = version({ previewImageHash: HASHES.b });
+    expect(representationsOf(previewed)).toEqual([
+      {
+        kind: 'flat',
+        imageHash: HASHES.b,
+        size: { width: 1024, height: 1024 },
+        pivot: { x: 0.5, y: 0.5 },
+      },
+    ]);
+  });
+
+  it('offers both when a version has both, cutout first because it is the richer answer', () => {
+    const both = version({ rig: riggedTo(partId), previewImageHash: HASHES.b });
+    expect(representationsOf(both).map((each) => each.kind)).toEqual(['cutout', 'flat']);
+  });
+
+  it('offers nothing for a half-produced version, so a router refuses rather than guessing', () => {
+    const midFlight = version({ status: 'matting' });
+    expect(representationsOf(midFlight)).toEqual([]);
+    expect(servesRepresentation(midFlight, 'flat')).toBe(false);
   });
 });
 

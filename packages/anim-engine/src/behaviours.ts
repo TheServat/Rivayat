@@ -13,7 +13,7 @@
  */
 
 import { assertNever, type Rng } from '@rv/shared-kernel';
-import type { AnimChannel, Behaviour, Vec2 } from '@rv/contracts';
+import { DEPTH_FAR_PLANE, type AnimChannel, type Behaviour, type Vec2 } from '@rv/contracts';
 
 import { fractalNoise1d, noise1d, signedNoise1d } from './noise';
 
@@ -100,6 +100,19 @@ function sway(b: Extract<Behaviour, { kind: 'sway' }>, ctx: BehaviourContext): C
  * Emits the *body* motion only - the vertical bounce and the forward carry. Limb
  * rotation comes from the rig's own clip; this is the part that must stay in phase with
  * the ground, and it is where a mismatched stride shows up as sliding feet.
+ *
+ * ## The bounce is a fraction of the stride, not a number of pixels
+ *
+ * It used to be `bounce * 8` - eight literal pixels at full amplitude, on every rig. So
+ * a character twice the size bounced the same absolute distance and read as crouching,
+ * and there was nothing retargeting could do about it: `bounce` is a `Unit01` weight, so
+ * scaling it is both out of range and meaningless.
+ *
+ * `strideLength` is the one real distance the behaviour carries and the one retargeting
+ * already rescales, so expressing the rise as a fraction of it makes the whole behaviour
+ * proportional for free - and ties the two halves of a gait together, which is how they
+ * work: a longer stride is a bigger rise, because the body is vaulting over a straighter
+ * leg. {@link BOUNCE_PER_STRIDE} is the constant of proportionality at full amplitude.
  */
 function walkCycle(
   b: Extract<Behaviour, { kind: 'walk-cycle' }>,
@@ -109,7 +122,8 @@ function walkCycle(
   const stepPhase = seconds * b.stepsPerSecond;
 
   // The body rises twice per stride - once per foot - so the bounce is at 2x.
-  const bounce = Math.abs(Math.sin(stepPhase * Math.PI)) * b.bounce * 8;
+  const bounce =
+    Math.abs(Math.sin(stepPhase * Math.PI)) * b.bounce * b.strideLength * BOUNCE_PER_STRIDE;
   const lean = GAIT_LEAN[b.gait];
   // A limp is a gait, not a bug: asymmetry between the two halves of the stride.
   // Period 2 in stride phase, and antisymmetric: one leg carries more than the other.
@@ -123,6 +137,15 @@ function walkCycle(
     rotation: lean + limpBias,
   };
 }
+
+/**
+ * Vertical rise at `bounce: 1`, as a fraction of the stride.
+ *
+ * 15 % is the stylised end of the range - a real human's centre of mass rises around 3 %
+ * of a stride - because `bounce` is an animation knob and 1 should mean "as bouncy as
+ * this system goes", not "as bouncy as a person".
+ */
+const BOUNCE_PER_STRIDE = 0.15;
 
 const GAIT_LEAN: Readonly<Record<Extract<Behaviour, { kind: 'walk-cycle' }>['gait'], number>> = {
   walk: 0,
@@ -161,6 +184,25 @@ function orbit(b: Extract<Behaviour, { kind: 'orbit' }>, ctx: BehaviourContext):
  *
  * Reads the node's own depth and the camera, so a foreground element can opt out simply
  * by not carrying the behaviour - which is what a UI overlay must do.
+ *
+ * ## The sign, which was wrong
+ *
+ * The delta is **positive**: the layer is pushed *with* the camera, not against it. That
+ * reads backwards until you remember that the camera transform has already subtracted
+ * the camera position downstream (`cameraMatrix` in `@rv/render-engine`), so the screen
+ * displacement of a layer is
+ *
+ *     screen = (world + delta) - camera = -pan * (1 - factor)
+ *
+ * A far layer therefore moves *less* than the camera plane, which is what parallax is.
+ * Negating here subtracted the pan twice and gave `-pan * (1 + factor)`: on a 400 px pan
+ * the far plane swept 746 px while the camera plane swept 400, so the sky raced past the
+ * foreground at 1.86x - depth inverted, at speed.
+ *
+ * It survived because the only tests were on the delta in isolation, where the sign is
+ * unobservable: `Math.abs` on one value, and `parallaxFactor` monotonicity, neither of
+ * which composes the delta with the camera it is defined against. `parallax-composition.spec.ts`
+ * asserts the composed screen displacement instead, which is the number a viewer sees.
  */
 function parallax(
   b: Extract<Behaviour, { kind: 'parallax' }>,
@@ -168,20 +210,53 @@ function parallax(
 ): ChannelDeltas {
   const factor = parallaxFactor(ctx.depth, b.curve) * b.strength;
   return {
-    'position.x': -ctx.camera.position.x * factor,
-    'position.y': -ctx.camera.position.y * factor,
+    'position.x': ctx.camera.position.x * factor,
+    'position.y': ctx.camera.position.y * factor,
   };
 }
 
+/**
+ * How much of the camera's pan a layer at `depth` absorbs.
+ *
+ * **Depth is a signed distance from the camera plane.** 0 is the plane itself and moves
+ * with the camera exactly; positive is behind it and lags; **negative is in front of it
+ * and over-travels**, which is what something between the camera and the focal plane
+ * genuinely does - a fence post at the roadside sweeps past faster than the field behind
+ * it. That is not an edge case, it is a cinematic effect a director asks for by name.
+ *
+ * It used to be `Math.max(0, depth)`, which clamped the whole near half to the camera
+ * plane. The clamp was the bug, not the negative: it made `ParallaxDepth < 1` -
+ * documented in `story/shot.ts` as "nearer and over-travels" - impossible to represent
+ * in an IR at all, so a shot compiler would have had to drop it silently or invent a
+ * mapping. A signed distance is also the more honest shape: it says "in front" and
+ * "behind" instead of pretending the camera sits at the near limit of the world.
+ *
+ * The saturation is deliberately **one-sided**. Behind the plane the fall-off is capped
+ * at 1, because a layer at or past the far plane is pinned to the camera and must not
+ * come back the other way. In front of it there is no limit to cap: the nearer a thing
+ * is, the faster it sweeps, without bound, and capping there is exactly what made the
+ * conversion lossy. See `irDepthFor` in `story/shot.ts` for the mapping this admits.
+ */
 function parallaxFactor(
   depth: number,
   curve: Extract<Behaviour, { kind: 'parallax' }>['curve'],
 ): number {
-  // Depth 0 is the camera plane and moves with it; larger depths lag further behind.
-  const normalised = Math.max(0, depth) / 100;
+  // The far plane is `DEPTH_FAR_PLANE` from `@rv/contracts` rather than a local literal:
+  // 2.5D layer separation places layers on the same scale, and one definition of "far"
+  // beats two that happen to agree today.
+  const normalised = depth / DEPTH_FAR_PLANE;
+  const magnitude = fallOff(Math.abs(normalised), curve);
+  return normalised < 0 ? -magnitude : Math.min(1, magnitude);
+}
+
+/** The shape of the fall-off, over a non-negative normalised distance. */
+function fallOff(
+  normalised: number,
+  curve: Extract<Behaviour, { kind: 'parallax' }>['curve'],
+): number {
   switch (curve) {
     case 'linear':
-      return Math.min(1, normalised);
+      return normalised;
     case 'exponential':
       return 1 - Math.exp(-normalised * 2);
     case 'logarithmic':

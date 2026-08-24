@@ -75,6 +75,7 @@ export const IR_FEATURES = [
   'node:fx-emitter',
   // ── node properties that a consumer may not have ──────────────────────────
   'node:hierarchy',
+  'node:anchor-attachment',
   'node:tint',
   'node:flip-x',
   'node:clip-playback',
@@ -111,10 +112,13 @@ export const IR_FEATURES = [
   'behaviour:look-at',
   'behaviour:follow-path',
   'behaviour:lip-sync',
+  // ── how an asset instance is drawn ────────────────────────────────────────
+  'representation:video',
   // ── scene-level ───────────────────────────────────────────────────────────
   'camera:track',
   'camera:shake',
   'camera:focus-node',
+  'camera:projection',
   'markers',
 ] as const;
 
@@ -193,6 +197,8 @@ const IR_FEATURE_DESCRIPTIONS: Readonly<Record<IrFeature, string>> = {
   'node:shape': 'shape nodes',
   'node:fx-emitter': 'particle emitters',
   'node:hierarchy': 'the parent/child node hierarchy',
+  'node:anchor-attachment':
+    'a node hung off a named anchor on its parent instance’s rig, e.g. a prop held at `grip-right`',
   'node:tint': 'per-instance tint',
   'node:flip-x': 'horizontal flip on an asset instance',
   'node:clip-playback': 'a named rig clip playing on an instance (loop, offset, speed)',
@@ -226,9 +232,12 @@ const IR_FEATURE_DESCRIPTIONS: Readonly<Record<IrFeature, string>> = {
   'behaviour:look-at': 'the procedural `look-at` behaviour',
   'behaviour:follow-path': 'the procedural `follow-path` behaviour',
   'behaviour:lip-sync': 'the procedural `lip-sync` behaviour',
+  'representation:video':
+    'an asset instance drawn as pre-rendered footage rather than as artwork the engine composes',
   'camera:track': 'the camera track (pan / zoom / roll)',
   'camera:shake': 'seeded camera shake',
   'camera:focus-node': 'the camera’s focus node, which drives per-format reframing',
+  'camera:projection': 'a non-orthographic camera projection, e.g. isometric',
   markers: 'timeline markers',
 };
 
@@ -265,12 +274,22 @@ export function detectIrFeatures(ir: AnimationIR): IrFeatureUse {
   for (const node of ir.nodes) {
     note(`node:${node.kind}`, node.id);
     if (node.parentId !== null) note('node:hierarchy', node.id);
+    // On `NodeBase`, so it is detected before the per-kind switch: a prop is an
+    // asset-instance, a speech balloon is a text node, and an emitter can sit at an
+    // anchor too. Any of them is something a format without rigs has to be warned about.
+    if (node.attachment !== undefined) note('node:anchor-attachment', node.id);
 
     switch (node.kind) {
       case 'asset-instance': {
         if (node.tint !== undefined) note('node:tint', node.id);
         if (node.flipX) note('node:flip-x', node.id);
         if (node.clipName !== undefined) note('node:clip-playback', node.id);
+        // Only video is noted. The other representations are different arrangements of
+        // still images and every consumer that can draw one can draw them all, so a
+        // feature for each would be four rows nobody can ever fail on. Footage is a
+        // real capability: a canvas backend cannot decode it and cannot approximate it
+        // either, and a format that silently drops it ships a hole in the timeline.
+        if (node.asset.representation === 'video') note('representation:video', node.id);
         break;
       }
       case 'text': {
@@ -316,6 +335,11 @@ export function detectIrFeatures(ir: AnimationIR): IrFeatureUse {
     note('camera:track', ir.id);
     if (ir.camera.shakeAmplitude > 0) note('camera:shake', ir.id);
     if (ir.camera.focusNodeId !== undefined) note('camera:focus-node', ir.camera.focusNodeId);
+    // Orthographic is the identity and changes nothing, so it is not a feature. Any
+    // other projection is: a format that cannot express one renders the composition
+    // from a different point of view, which is a bigger loss than most of the rows
+    // above and would otherwise be the only silent one.
+    if (ir.camera.projection !== 'orthographic') note('camera:projection', ir.id);
   }
 
   for (const marker of ir.markers) note('markers', marker.id);

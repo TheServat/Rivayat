@@ -24,6 +24,7 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "bless:goldens": "node ../../node_modules/tsx/dist/cli.mjs scripts/bless-goldens.ts",
     "clean": "rimraf dist .turbo"
   },
   "dependencies": {

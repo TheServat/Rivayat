@@ -125,6 +125,97 @@ describe('nodes', () => {
     ]);
   });
 
+  it('reports an attachment on any node kind, because a prop is not the only thing that hangs off one', () => {
+    // Detected on `NodeBase`, before the per-kind switch. A held prop is an
+    // asset-instance, a speech balloon is a text node and an emitter can sit at an anchor
+    // too - and every one of them is something a format without rigs must be warned about
+    // rather than silently drawing at the instance's origin.
+    const uses = detectIrFeatures(
+      ir({
+        nodes: [
+          {
+            kind: 'asset-instance',
+            id: ROOT,
+            name: 'kael',
+            parentId: null,
+            asset: { assetId: ids.asset(), versionId: ids.assetVersion() },
+          },
+          {
+            kind: 'text',
+            id: CHILD,
+            name: 'balloon',
+            parentId: ROOT,
+            text: 'Hello',
+            attachment: { anchor: 'speech', inheritRotation: false },
+          },
+        ],
+      }),
+    );
+    expect(uses.get('node:anchor-attachment')).toEqual([CHILD]);
+  });
+
+  it('does not claim an attachment for a node that simply has a parent', () => {
+    const uses = detectIrFeatures(
+      ir({
+        nodes: [
+          { kind: 'group', id: ROOT, name: 'root', parentId: null },
+          { kind: 'group', id: CHILD, name: 'staging', parentId: ROOT },
+        ],
+      }),
+    );
+    expect(uses.has('node:anchor-attachment')).toBe(false);
+  });
+
+  it('reports footage separately from artwork, because a canvas backend cannot decode it', () => {
+    const drawn = ir({
+      nodes: [
+        {
+          kind: 'asset-instance',
+          id: ROOT,
+          name: 'oak',
+          parentId: null,
+          asset: { assetId: ids.asset(), versionId: ids.assetVersion() },
+        },
+      ],
+    });
+    const footage = ir({
+      nodes: [
+        {
+          kind: 'asset-instance',
+          id: ROOT,
+          name: 'explosion',
+          parentId: null,
+          asset: {
+            assetId: ids.asset(),
+            versionId: ids.assetVersion(),
+            representation: 'video',
+          },
+        },
+      ],
+    });
+
+    expect(featuresOf(drawn)).toEqual(['node:asset-instance']);
+    expect(featuresOf(footage)).toEqual(['node:asset-instance', 'representation:video']);
+    expect(detectIrFeatures(footage).get('representation:video')).toEqual([ROOT]);
+  });
+
+  it('does not report the still representations, which every consumer can already draw', () => {
+    for (const representation of ['flat', 'cutout', 'layered-2.5d'] as const) {
+      const document = ir({
+        nodes: [
+          {
+            kind: 'asset-instance',
+            id: ROOT,
+            name: 'oak',
+            parentId: null,
+            asset: { assetId: ids.asset(), versionId: ids.assetVersion(), representation },
+          },
+        ],
+      });
+      expect(featuresOf(document)).toEqual(['node:asset-instance']);
+    }
+  });
+
   it('separates right-to-left text from text, because most formats have only the first', () => {
     const ltr = ir({
       nodes: [{ kind: 'text', id: ROOT, name: 'a', parentId: null, text: 'x', direction: 'ltr' }],
@@ -375,6 +466,19 @@ describe('the scene level', () => {
     // The focus node is named by the node it points at, because that is the node a
     // reframer will fail to keep in shot.
     expect(detectIrFeatures(full).get('camera:focus-node')).toEqual([ROOT]);
+  });
+
+  it('reports a projection only when it is not the orthographic one everything already assumed', () => {
+    const flat = ir({ camera: { keyframes: [{ timeMs: 0, position: { x: 0, y: 0 } }] } });
+    const isometric = ir({
+      camera: {
+        keyframes: [{ timeMs: 0, position: { x: 0, y: 0 } }],
+        projection: 'isometric',
+      },
+    });
+
+    expect(featuresOf(flat)).not.toContain('camera:projection');
+    expect(featuresOf(isometric)).toEqual(['node:group', 'camera:track', 'camera:projection']);
   });
 
   it('reports markers by their own ids, so a lost cue can be named', () => {

@@ -53,6 +53,12 @@ export const ProviderKind = z.enum([
   'comfyui',
   'pollinations',
   'openai-compatible',
+  // Voice engines. Three, not one, because they are not interchangeable: two run
+  // locally and are free, one is paid and charges by the character, and each expresses
+  // emotion in a dialect the others cannot read (see `audio/speech-model.ts`).
+  'higgs',
+  'chatterbox',
+  'elevenlabs',
 ]);
 export type ProviderKind = z.infer<typeof ProviderKind>;
 
@@ -71,6 +77,7 @@ export const Capability = z.enum([
   'image-edit',
   'vision-scoring',
   'embedding',
+  'speech-synthesis',
 ]);
 export type Capability = z.infer<typeof Capability>;
 
@@ -201,6 +208,11 @@ export const TaskKind = z.enum([
   'image-edit',
   'vision-score',
   'embed',
+  // One task, not two. A narrated line and a character line are the same work when a
+  // machine does either of them; whether a machine does it at all is decided earlier,
+  // by `VoiceCasting`, and a task kind that must never be routed would only be a trap
+  // for whoever wired the router next.
+  'speech-line',
 ]);
 export type TaskKind = z.infer<typeof TaskKind>;
 

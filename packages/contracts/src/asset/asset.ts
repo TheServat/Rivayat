@@ -46,6 +46,12 @@ import {
   embeddingShape,
 } from '../primitives/common';
 import { AssetArchetype, AssetKey, QualityTarget } from './asset-spec';
+import {
+  AssetRepresentation,
+  RepresentationKind,
+  findRepresentation,
+  type FlatRepresentation,
+} from './representation';
 import { Rig } from './rig';
 
 // ── parts ───────────────────────────────────────────────────────────────────
@@ -199,6 +205,23 @@ export const AssetVersion = z
     rig: Rig.optional().describe('Absent while the version is still being rigged'),
     variants: z.array(AssetVariant).default([]),
     clips: z.array(AnimationClip).default([]),
+    /**
+     * What this version can be served as. See `representation.ts`.
+     *
+     * **Optional, and absent is a real state** rather than a shrug: every version
+     * written before representations existed has none, and the honest answer for those
+     * is not "assume cutout" - it is to read what the version actually holds. That is
+     * what {@link representationsOf} does, and it is the only thing that should ever
+     * answer this question, because two places deciding what an undeclared version is
+     * would disagree exactly once and produce a wrong bitmap.
+     *
+     * At most one per kind: a representation is a *way of drawing this version*, and
+     * two answers to "draw it as a cutout" is a choice nothing downstream could make.
+     */
+    representations: z
+      .array(AssetRepresentation)
+      .optional()
+      .describe('Declared representations. Absent means "derive from the parts and rig".'),
 
     canvas: Size,
     nominalHeight: PositivePixels,
@@ -243,7 +266,81 @@ export const AssetVersion = z
         }
       }
     });
+
+    // The same reasoning one level along: a representation names parts and a rig with
+    // nothing local to resolve them against, so a `cutout` that binds a part matting
+    // dropped, or that names a rig this version was never fitted with, validates
+    // cleanly and surfaces as a missing layer in a finished frame.
+    const declared = version.representations ?? [];
+    const seen = new Set<string>();
+    declared.forEach((representation, index) => {
+      if (seen.has(representation.kind)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['representations', index, 'kind'],
+          message: `this version declares ${representation.kind} twice`,
+        });
+      }
+      seen.add(representation.kind);
+
+      if (representation.kind !== 'cutout') return;
+      if (version.rig?.id !== representation.rigId) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['representations', index, 'rigId'],
+          message: `cutout representation names rig ${representation.rigId}, which is not this version's rig`,
+        });
+      }
+      for (const partId of representation.partIds) {
+        if (!partIds.has(partId)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['representations', index, 'partIds'],
+            message: `cutout representation draws part ${partId}, which this version does not have`,
+          });
+        }
+      }
+    });
   });
+
+/**
+ * What this version can be served as, whether or not it says so.
+ *
+ * The migration bridge, and the *only* place an undeclared version is interpreted. It
+ * derives rather than assumes: a version with a rig can be served as a cutout because
+ * it has one, and a version with a flattened preview can be served flat because those
+ * are the pixels. A version with neither gets an empty list, which is the correct and
+ * useful answer - the router will refuse to place it rather than draw the wrong thing.
+ *
+ * Once a producer declares representations, this returns exactly what was declared and
+ * derives nothing. That is the whole point: the derivation is a bridge over versions
+ * written before the field existed, not a permanent second opinion.
+ */
+export function representationsOf(version: AssetVersion): readonly AssetRepresentation[] {
+  if (version.representations !== undefined) return version.representations;
+
+  const derived: AssetRepresentation[] = [];
+  const rig = version.rig;
+  if (rig !== undefined) {
+    derived.push({ kind: 'cutout', rigId: rig.id, partIds: version.parts.map((part) => part.id) });
+  }
+  const preview = version.previewImageHash;
+  if (preview !== undefined) {
+    const flat: FlatRepresentation = {
+      kind: 'flat',
+      imageHash: preview,
+      size: version.canvas,
+      pivot: { x: 0.5, y: 0.5 },
+    };
+    derived.push(flat);
+  }
+  return derived;
+}
+
+/** Whether this version can be drawn the way a reference asks for. */
+export function servesRepresentation(version: AssetVersion, kind: RepresentationKind): boolean {
+  return findRepresentation(representationsOf(version), kind) !== null;
+}
 export type AssetVersion = z.infer<typeof AssetVersion>;
 
 // ── identity ────────────────────────────────────────────────────────────────
@@ -332,6 +429,24 @@ export const AssetRef = z.object({
     'The variant by its stable slug key, e.g. "winter". Note that `AssetInstance` in ' +
       '`story/shot.ts` addresses the same variant by its minted `VariantId` instead.',
   ),
+  /**
+   * How this placement wants the asset drawn.
+   *
+   * On the *reference* and not on the asset record, because the choice is a shot-level
+   * one - the same character is one flat image in a wide shot and a rig in a close-up -
+   * and because it must be **pinned**. A representation looked up from a mutable asset
+   * record at render or export time is the identical failure `versionId` exists to
+   * prevent one level up: the export stops being a pure function of the IR, and two
+   * exports of the same document can differ.
+   *
+   * Defaulted rather than optional, so an IR carries the answer explicitly once parsed
+   * and every consumer reads a value instead of re-deriving one. `cutout` is the
+   * default because it is what every existing document already meant.
+   */
+  representation: RepresentationKind.default('cutout').describe(
+    'How to draw this placement: a single flat image, parts on a rig, depth-separated ' +
+      'layers, or footage. Use "cutout" unless the shot needs otherwise.',
+  ),
 });
 export type AssetRef = z.infer<typeof AssetRef>;
 
@@ -371,5 +486,10 @@ export function isPinnedAssetRef(ref: AssetRef): ref is PinnedAssetRef {
 export function pinsRef(authored: AssetRef, pinned: PinnedAssetRef): boolean {
   if (authored.assetId !== pinned.assetId) return false;
   if (authored.variantKey !== pinned.variantKey) return false;
+  // The representation is authored, not resolved: compilation may pick a *version*,
+  // never a different way of drawing it. Quietly downgrading a 2.5D placement to a flat
+  // because the flat was cheaper to serve is precisely the substitution that would make
+  // a re-render disagree with the preview the director approved.
+  if (authored.representation !== pinned.representation) return false;
   return authored.versionId === undefined || authored.versionId === pinned.versionId;
 }

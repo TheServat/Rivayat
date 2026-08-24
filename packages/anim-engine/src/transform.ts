@@ -64,6 +64,50 @@ export function composeTransform(parent: Transform2D, local: Transform2D): Trans
   };
 }
 
+/**
+ * The inverse of {@link composeTransform}: recovers `local` from `parent` and `world`.
+ *
+ * `evaluate` returns world transforms, which is the right shape for a renderer and the
+ * wrong one for anything that has to *re-parent* the result. Posing a rig is exactly
+ * that: a clip's node tree carries the animation and the skeleton carries the rest
+ * geometry, and the two interleave - `rest ∘ delta` at every bone - so the deltas have
+ * to be recovered as locals before they can be applied. The alternative is a second
+ * evaluator that returns locals, which is a second place for the accumulation rules to
+ * drift.
+ *
+ * A parent with a zero component is not invertible: the local value that produced it
+ * cannot be recovered, because every value produces the same zero. The world component
+ * is returned unchanged in that case, which is the only answer that is not a lie - it
+ * says "no information", and it keeps NaN out of the geometry, which is what the rig
+ * schema's own refinements exist to prevent.
+ */
+export function decomposeTransform(parent: Transform2D, world: Transform2D): Transform2D {
+  const offset: Vec2 = {
+    x: world.position.x - parent.position.x,
+    y: world.position.y - parent.position.y,
+  };
+  const unrotated = rotateVec(offset, -parent.rotation);
+
+  return {
+    position: {
+      x: divide(unrotated.x, parent.scale.x),
+      y: divide(unrotated.y, parent.scale.y),
+    },
+    rotation: world.rotation - parent.rotation,
+    scale: {
+      x: divide(world.scale.x, parent.scale.x),
+      y: divide(world.scale.y, parent.scale.y),
+    },
+    skew: { x: world.skew.x - parent.skew.x, y: world.skew.y - parent.skew.y },
+    anchor: world.anchor,
+    opacity: divide(world.opacity, parent.opacity),
+  };
+}
+
+function divide(value: number, by: number): number {
+  return by === 0 ? value : value / by;
+}
+
 /** Maps a point from the transform's local space into its parent's space. */
 export function transformPoint(transform: Transform2D, point: Vec2): Vec2 {
   const skewed: Vec2 = {

@@ -7,10 +7,15 @@ import {
   AnimNode,
   AnimationIR,
   Behaviour,
+  CAMERA_PROJECTIONS,
   CameraTrack,
   IR_VERSION,
   Marker,
+  NodeAttachment,
+  PROJECTION_BASES,
   Track,
+  projectScenePoint,
+  projectedExtent,
 } from './ir';
 
 describe('AnimationIR structural integrity', () => {
@@ -328,6 +333,139 @@ describe('camera and markers', () => {
     expect(parsed.keyframes[0]).toMatchObject({ zoom: 1, rotation: 0 });
   });
 
+  it('defaults the projection to orthographic, which is what every existing document meant', () => {
+    const parsed = CameraTrack.parse({ keyframes: [{ timeMs: 0, position: { x: 0, y: 0 } }] });
+    expect(parsed.projection).toBe('orthographic');
+  });
+
+  it('keeps the projection off the keyframe, because tweening one is a cut and not a move', () => {
+    const rejected = CameraTrack.safeParse({
+      keyframes: [{ timeMs: 0, position: { x: 0, y: 0 }, projection: 'isometric' }],
+    });
+    // Not an error - unknown keys are stripped - but it must not survive into the
+    // document, or two keyframes could disagree about what projection the shot is in.
+    expect(rejected.success).toBe(true);
+    expect(rejected.data?.keyframes[0]).not.toHaveProperty('projection');
+  });
+});
+
+// ── projection ───────────────────────────────────────────────────────────────
+
+describe('camera projection', () => {
+  it('has a basis for every projection in the vocabulary', () => {
+    for (const projection of CAMERA_PROJECTIONS) {
+      expect(PROJECTION_BASES[projection]).toBeDefined();
+    }
+    expect(Object.keys(PROJECTION_BASES).sort()).toEqual([...CAMERA_PROJECTIONS].sort());
+  });
+
+  it('is invertible for every projection, or the reframer could not solve a crop in it', () => {
+    for (const projection of CAMERA_PROJECTIONS) {
+      const basis = PROJECTION_BASES[projection];
+      const determinant = basis.xAxis.x * basis.yAxis.y - basis.yAxis.x * basis.xAxis.y;
+      expect(Math.abs(determinant)).toBeGreaterThan(0.1);
+    }
+  });
+
+  describe('orthographic is exactly the identity, so today renders byte-identically', () => {
+    const cases = [
+      { x: 0, y: 0 },
+      { x: 1, y: -1 },
+      { x: 960, y: -540 },
+      { x: -0.1, y: 0.7 },
+      { x: 1e-9, y: 1e9 },
+      { x: 1 / 3, y: 2 / 3 },
+    ];
+
+    it('returns the point unchanged at any depth, by identity and not by rounding', () => {
+      for (const point of cases) {
+        for (const depth of [0, 1, 42, -17, 1e6]) {
+          const projected = projectScenePoint('orthographic', point, depth);
+          // `toBe` is Object.is: this is exact equality, not a tolerance.
+          expect(projected.x).toBe(point.x);
+          expect(projected.y).toBe(point.y);
+        }
+      }
+    });
+
+    it('leaves the composition extent alone, so no crop moves', () => {
+      expect(projectedExtent('orthographic', { width: 1920, height: 1080 })).toEqual({
+        width: 1920,
+        height: 1080,
+      });
+    });
+
+    it('defaults the depth argument, so a 2D caller need not think about it', () => {
+      expect(projectScenePoint('orthographic', { x: 5, y: 6 })).toEqual({ x: 5, y: 6 });
+    });
+
+    it('sorts by depth, which is the rule the renderer already implements', () => {
+      expect(PROJECTION_BASES.orthographic.sort).toBe('depth');
+    });
+  });
+
+  describe('isometric is a matrix and a sort order, and nothing else', () => {
+    const SQRT3_OVER_2 = Math.sqrt(3) / 2;
+
+    it('turns the scene axes into a true isometric diamond', () => {
+      // One scene unit along x goes right and down; one along y goes left and down, by
+      // the same amount. That is a 30-degree elevation, and the diamond it traces is
+      // sqrt(3) wide for every 1 tall.
+      const alongX = projectScenePoint('isometric', { x: 1, y: 0 });
+      const alongY = projectScenePoint('isometric', { x: 0, y: 1 });
+      expect(alongX.x).toBeCloseTo(SQRT3_OVER_2, 12);
+      expect(alongX.y).toBeCloseTo(0.5, 12);
+      expect(alongY.x).toBeCloseTo(-SQRT3_OVER_2, 12);
+      expect(alongY.y).toBeCloseTo(0.5, 12);
+      expect(alongX.y).toBeCloseTo(alongY.y, 12);
+    });
+
+    it('sends the scene diagonal straight down the screen, which is what makes it read as a floor', () => {
+      const diagonal = projectScenePoint('isometric', { x: 1, y: 1 });
+      expect(diagonal.x).toBeCloseTo(0, 12);
+      expect(diagonal.y).toBeCloseTo(1, 12);
+    });
+
+    it('lifts depth up the screen, so what is further away draws higher', () => {
+      const ground = projectScenePoint('isometric', { x: 3, y: 5 }, 0);
+      const raised = projectScenePoint('isometric', { x: 3, y: 5 }, 40);
+      expect(raised.x).toBe(ground.x);
+      expect(raised.y).toBe(ground.y - 40);
+    });
+
+    it('is linear in depth, so a stack of layers separates evenly', () => {
+      const at = (depth: number): number => projectScenePoint('isometric', { x: 0, y: 0 }, depth).y;
+      expect(at(20) - at(10)).toBeCloseTo(at(60) - at(50), 12);
+    });
+
+    it('widens and shortens the composition, which is what the reframer must normalise against', () => {
+      const extent = projectedExtent('isometric', { width: 1000, height: 1000 });
+      expect(extent.width).toBeCloseTo(2 * SQRT3_OVER_2 * 1000, 9);
+      expect(extent.height).toBeCloseTo(1000, 9);
+      expect(extent.width).toBeGreaterThan(1000);
+    });
+
+    it('sorts by projected y, because depth no longer decides who occludes whom', () => {
+      expect(PROJECTION_BASES.isometric.sort).toBe('projected-y');
+    });
+  });
+
+  it('is linear, so translating the camera commutes with projecting the scene', () => {
+    // The property that lets a renderer insert the projection into the existing camera
+    // matrix as one extra multiply, with the camera position still authored in scene
+    // space: P(p - c) === P(p) - P(c).
+    const point = { x: 130, y: -70 };
+    const camera = { x: -400, y: 25 };
+    const before = projectScenePoint('isometric', {
+      x: point.x - camera.x,
+      y: point.y - camera.y,
+    });
+    const pp = projectScenePoint('isometric', point);
+    const pc = projectScenePoint('isometric', camera);
+    expect(before.x).toBeCloseTo(pp.x - pc.x, 9);
+    expect(before.y).toBeCloseTo(pp.y - pc.y, 9);
+  });
+
   it('accepts every marker kind', () => {
     const ids = testIds();
     for (const kind of ['beat', 'cut', 'dialogue', 'sfx', 'music', 'custom']) {
@@ -471,5 +609,103 @@ describe('part and bone overrides address a real instance', () => {
     expect(result.error?.issues.map((issue) => issue.path.join('.'))).toEqual([
       'nodes.1.instanceId',
     ]);
+  });
+});
+
+// ── attachments: a prop on a rig anchor, with no bone named anywhere ────────
+
+describe('NodeAttachment', () => {
+  it('inherits the anchor’s rotation by default, because a held prop turns with the hand', () => {
+    expect(NodeAttachment.parse({ anchor: 'grip-right' })).toEqual({
+      anchor: 'grip-right',
+      inheritRotation: true,
+    });
+  });
+
+  it('can opt out, for something that tracks a point and must stay upright', () => {
+    // A speech balloon over a tumbling character.
+    expect(NodeAttachment.parse({ anchor: 'speech', inheritRotation: false }).inheritRotation).toBe(
+      false,
+    );
+  });
+
+  it('requires a machine-safe anchor name', () => {
+    expect(NodeAttachment.safeParse({ anchor: 'Grip Right' }).success).toBe(false);
+  });
+});
+
+describe('an attachment hangs off something with a rig', () => {
+  const ids = testIds();
+  const instanceNode = ids.node();
+  const groupNode = ids.node();
+
+  const instance = {
+    kind: 'asset-instance',
+    id: instanceNode,
+    name: 'kael',
+    parentId: null,
+    transform: {},
+    visible: true,
+    depth: 0,
+    asset: { assetId: ids.asset(), versionId: ids.assetVersion() },
+  };
+
+  const group = {
+    kind: 'group',
+    id: groupNode,
+    name: 'staging',
+    parentId: null,
+    transform: {},
+    visible: true,
+    depth: 0,
+  };
+
+  function prop(parentId: string | null): Record<string, unknown> {
+    return {
+      kind: 'asset-instance',
+      id: ids.node(),
+      name: 'lantern',
+      parentId,
+      transform: {},
+      visible: true,
+      depth: 0,
+      asset: { assetId: ids.asset(), versionId: ids.assetVersion() },
+      attachment: { anchor: 'grip-right' },
+    };
+  }
+
+  function paths(nodes: readonly unknown[]): string[] {
+    const result = AnimationIR.safeParse(animationIr({ nodes, tracks: [] }));
+    return (result.error?.issues ?? []).map((issue) => issue.path.join('.'));
+  }
+
+  it('accepts a prop attached to an asset instance', () => {
+    const result = AnimationIR.safeParse(
+      animationIr({ nodes: [instance, prop(instanceNode)], tracks: [] }),
+    );
+    expect(result.success, result.success ? '' : z.prettifyError(result.error)).toBe(true);
+  });
+
+  it('rejects one attached to a group, which has no rig and therefore no anchors', () => {
+    // Otherwise a silent no-op: the prop draws at the origin and nothing says why.
+    expect(paths([group, prop(groupNode)])).toEqual(['nodes.1.attachment']);
+  });
+
+  it('rejects one with no parent at all to attach to', () => {
+    expect(paths([instance, prop(null)])).toEqual(['nodes.1.attachment']);
+  });
+
+  it('leaves the anchor name unchecked, because the rig is not in this document', () => {
+    // The IR names an `AssetVersion`; the rig lives on it. That failure belongs where the
+    // rig is in scope - `anchorPoint` in `@rv/anim-engine` returns a `NotFoundError`.
+    const nonsense = { ...prop(instanceNode), attachment: { anchor: 'no-such-anchor' } };
+    expect(
+      AnimationIR.safeParse(animationIr({ nodes: [instance, nonsense], tracks: [] })).success,
+    ).toBe(true);
+  });
+
+  it('is absent on an ordinary node rather than defaulted to something', () => {
+    const parsed = AnimationIR.parse(animationIr({ nodes: [instance], tracks: [] }));
+    expect(parsed.nodes[0]?.attachment).toBeUndefined();
   });
 });

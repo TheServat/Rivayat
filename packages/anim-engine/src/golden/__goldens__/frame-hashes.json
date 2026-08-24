@@ -1,0 +1,23 @@
+{
+  "$note": "Blessed frame hashes for packages/anim-engine. Do not hand-edit. Re-bless with `pnpm --filter @rv/anim-engine bless:goldens`, and only when you meant to change what the engine draws - a moved hash here is a moved pixel in every shot.",
+  "behaviour-menagerie": {
+    "frames": 120,
+    "restHash": "f7e696859f467d11e9714fd62109b55549c001d9651ab93bbf1bbd11a77ef10d",
+    "clipHash": "b4045743ac73b1901a7c97313cd03ec944374d7f7c6f0b6c1f76fac83141e04f"
+  },
+  "bird-shoulder-rig": {
+    "frames": 144,
+    "restHash": "ab0ea9de855e4a50f695520c6f2857d1934df6a6fa99a6ffcf980f7b6f44d1a3",
+    "clipHash": "d7acca23f94df2e75185ecc60bf5229f7bb09cd3c5868b9344116ed8e0c9b91a"
+  },
+  "camera-pan-over-depths": {
+    "frames": 48,
+    "restHash": "0270697940208b7bf864fb972bbf2488d15c7c121444b5e9096fb5934c588fa5",
+    "clipHash": "aab052c9f7b72912ff535186ba1b5342c7a3cccf932e064966244641e5081292"
+  },
+  "walk-cycle-two-statures": {
+    "frames": 48,
+    "restHash": "941acbac0bb95317d17b189910531262041851b28b30c3812e1ea0975f183845",
+    "clipHash": "6f2f81f1d777ed55dd5fc92633fdf6ebd15ad4b79a7fb24c05a6427d65ee5b6c"
+  }
+}

@@ -329,6 +329,40 @@ describe('orbit', () => {
   });
 });
 
+describe('walk cycle', () => {
+  function riseAt(strideLength: number, timeMs: number): number {
+    const deltas = evaluateBehaviour(
+      behaviour('walk-cycle', { strideLength, bounce: 0.5, stepsPerSecond: 2 }),
+      ctx({ timeMs }),
+    );
+    return -(deltas['position.y'] ?? 0);
+  }
+
+  it('rises by a fraction of the stride, so a bigger character does not crouch', () => {
+    // It used to rise by a literal eight pixels at full amplitude, on every rig. A
+    // character twice the size then bounced the same absolute distance - which reads as
+    // a crouch - and retargeting could not fix it, because `bounce` is a `Unit01` weight
+    // with nothing to scale. `strideLength` is the one real distance here and the one
+    // retargeting already rescales.
+    expect(riseAt(120, 125)).toBeCloseTo(riseAt(60, 125) * 2, 9);
+    expect(riseAt(30, 125)).toBeCloseTo(riseAt(60, 125) / 2, 9);
+  });
+
+  it('never pushes the body downwards, so the feet cannot be driven through the floor', () => {
+    for (let timeMs = 0; timeMs <= 2000; timeMs += 17) {
+      expect(riseAt(60, timeMs), `t=${String(timeMs)}`).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('carries the body forward at the stride it was given', () => {
+    const deltas = evaluateBehaviour(
+      behaviour('walk-cycle', { strideLength: 60, stepsPerSecond: 2 }),
+      ctx({ timeMs: 1000 }),
+    );
+    expect(deltas['position.x']).toBeCloseTo(120, 9);
+  });
+});
+
 describe('parallax', () => {
   it('leaves the camera plane alone and lags what is behind it', () => {
     const camera = { position: { x: 100, y: 0 }, zoom: 1 };
@@ -338,6 +372,18 @@ describe('parallax', () => {
     expect(Math.abs(far['position.x'] ?? 0)).toBeGreaterThan(0);
   });
 
+  it('pushes a layer *with* the camera, so the camera transform cancels part of the pan', () => {
+    // The sign, asserted rather than absolute-valued. The delta is defined against a
+    // camera transform that has already subtracted the camera position, so pushing the
+    // layer the same way is what makes the composed displacement smaller than the pan.
+    // Negating it subtracts twice and inverts depth - see `parallax-composition.spec.ts`,
+    // which measures the thing a viewer actually sees.
+    const camera = { position: { x: 100, y: -60 }, zoom: 1 };
+    const far = evaluateBehaviour(behaviour('parallax'), ctx({ depth: 100, camera }));
+    expect(far['position.x'] ?? 0).toBeGreaterThan(0);
+    expect(far['position.y'] ?? 0).toBeLessThan(0);
+  });
+
   it('lags more the further back a layer sits, on every curve', () => {
     for (const curve of ['linear', 'exponential', 'logarithmic'] as const) {
       expect(parallaxFactor(80, curve)).toBeGreaterThan(parallaxFactor(20, curve));
@@ -345,8 +391,47 @@ describe('parallax', () => {
     }
   });
 
-  it('treats a negative depth as the camera plane rather than inverting', () => {
-    expect(parallaxFactor(-50, 'linear')).toBe(0);
+  it('reads depth as a signed distance, so a layer in front of the plane over-travels', () => {
+    // This used to clamp to 0, and the clamp was the bug. Something between the camera
+    // and the focal plane genuinely sweeps faster than the plane - a fence post at the
+    // roadside against the field behind it - and `ParallaxDepth` in `story/shot.ts` has
+    // always promised it ("below 1 is nearer and over-travels"). With the clamp there was
+    // no depth that could express it, so the promise was unkeepable.
+    expect(parallaxFactor(-50, 'linear')).toBe(-0.5);
+    expect(parallaxFactor(-100, 'linear')).toBe(-1);
+    expect(parallaxFactor(50, 'linear')).toBe(0.5);
+  });
+
+  it('is odd about the camera plane, inside the far plane where no clamp applies', () => {
+    // Mirroring a layer through the camera plane mirrors its travel. Only asserted inside
+    // the far plane, because the saturation beyond it is deliberately one-sided and would
+    // break the symmetry there - which is the point of the next test.
+    for (const curve of ['linear', 'exponential', 'logarithmic'] as const) {
+      for (const depth of [1, 10, 40, 99]) {
+        expect(parallaxFactor(-depth, curve), `${curve}@${String(depth)}`).toBeCloseTo(
+          -parallaxFactor(depth, curve),
+          12,
+        );
+      }
+    }
+  });
+
+  it('saturates behind the plane and not in front of it', () => {
+    // One-sided on purpose. Behind the far plane a layer is pinned to the camera and must
+    // not start travelling backwards, so the fall-off caps at 1. In front there is nothing
+    // to cap - the nearer a thing is the faster it sweeps - and capping there is what made
+    // `ParallaxDepth < 1` unrepresentable.
+    expect(parallaxFactor(1000, 'linear')).toBe(1);
+    expect(parallaxFactor(1000, 'logarithmic')).toBe(1);
+    expect(parallaxFactor(-1000, 'linear')).toBe(-10);
+    expect(parallaxFactor(-9900, 'linear')).toBe(-99);
+  });
+
+  it('pushes a near layer against the camera, so it outruns the pan on screen', () => {
+    const camera = { position: { x: 100, y: 0 }, zoom: 1 };
+    const near = evaluateBehaviour(behaviour('parallax'), ctx({ depth: -100, camera }));
+    // Negative delta, so `world - camera` grows past the pan rather than shrinking below it.
+    expect(near['position.x'] ?? 0).toBeLessThan(0);
   });
 });
 

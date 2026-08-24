@@ -83,15 +83,23 @@ const REFINEMENT_INVENTORY: Readonly<Record<string, string>> = {
   Asset:
     'currentVersionId resolves; version ordinals unique; an embedding and its model are present together (shared `checkEmbeddingPair`)',
   AssetVersion: 'bone part bindings and variant part names resolve against this version',
+  AudioCue:
+    'a cue with bytes has a measured duration; a human-performed cue names no synthesis model and carries the window it must land in; speech sits on a speech track and sound does not',
+  AudioTimeline: 'cue ids unique; no cue starts after the programme ends',
   BitrateRange: 'maxMbps >= minMbps',
+  ClipLibraryEntry:
+    'every driven role and every aligned-to anchor exists on the clip’s own source rig - a clip with no source proportion to scale from is unretargetable to anything',
   ContinuityIssue: 'a contradiction names both of its sides',
   CostEstimate: 'hits + misses = items; projection inside its own bracket',
   DeformMesh: 'whole triangles, indices in range, vertex weights sum to 1',
+  DepthBand: 'a band does not end nearer the camera than it starts',
   Episode: 'act ordinals are 1..n; airedAt present exactly when aired',
   EpisodeOutline:
     'act ordinals are 1..n; airedAt present exactly when aired - same two checks as `Episode`, shared via `checkSiblingOrdinals` and `checkAirState`',
   Fact: 'validUntil >= validFrom and retractedAt >= assertedAt, via the same shared `checkBiTemporalOrder` as `Relation`; an embedding and its model are present together (shared `checkEmbeddingPair`); a summary does not cover itself',
   FrameRange: 'the range contains at least one frame',
+  Layered25dRepresentation:
+    'layers run strictly near to far and no two share a name - the index order is what a compiler turns into paint order, so it has to agree with the depth it derives',
   ModelDescriptor:
     'image capability implies image output and an image price; `:free` implies free and text-only',
   MotionStyle: 'defaultEasing and camera.panEase resolve against easings; easing names unique',
@@ -111,11 +119,15 @@ const REFINEMENT_INVENTORY: Readonly<Record<string, string>> = {
   RenderProgress: 'framesDone <= framesTotal',
   RetrievedFact:
     'an always-included fact is rank 0, score 1; a `fact`-kinded ref names the same id as factId',
-  Rig: 'one root, no duplicate or cyclic bones, and every mesh/chain/anchor/constraint reference resolves',
+  Rig: 'one root, no duplicate or cyclic bones, no duplicate anchor name or role, and every mesh/chain/anchor/constraint reference resolves',
+  RigSignature:
+    'one root, no duplicate or cyclic bone roles, and every anchor resolves to a role the signature has - the same skeleton integrity as `Rig`, expressed in roles because that is what two rigs can be compared on',
   Scene: 'beat ordinals are 1..n',
   SceneSpace:
     'reframeTargets contains the master aspect, has no repeats, and covers every override',
   Season: 'episode ordinals are 1..n',
+  SpeechModelDescriptor:
+    'a free voice quotes no nonzero rate; a named-tag engine cites where its tag vocabulary was verified, because an unsourced tag is one the audience hears read aloud',
   Sequence: 'scene ordinals are 1..n',
   SeriesBible: 'season ordinals are 1..n',
   Shot: 'instance handles unique, paint orders unique, blocking and focus resolve against the layout',
@@ -127,6 +139,8 @@ const REFINEMENT_INVENTORY: Readonly<Record<string, string>> = {
   TargetFormat: 'deliverables contains the master aspect and has no repeats',
   Track: 'keyframes strictly ordered by time',
   VisualStyle: 'a custom medium describes itself',
+  VoiceCasting:
+    'one speaker has one voice; only the narrator entity holds the narrator role and it must be cast; a human voice carries no engine binding and a synthetic one carries something to synthesise from',
   WorldStateSnapshot: 'each keyed epistemic view belongs to its key and to the snapshot instant',
 };
 
@@ -413,6 +427,12 @@ describe('every domain type is inferred from a schema', () => {
     AnySettingDescriptor: 'settings/descriptor.ts: `SettingDescriptor<unknown>`, same reason',
     IrFeatureUse:
       'anim/features.ts: a `ReadonlyMap` from a derivation, not a document. Nothing stores or transmits it - a Map has no JSON form - and its key type `IrFeature` IS a schema.',
+    DeliveryNoteLike:
+      'audio/emotion.ts: the structural subset of `DeliveryNote` that `toSpeechDirection` reads. It exists so the audio module does not import the story module for one field of shape; the real schema is `DeliveryNote` and a `DeliveryNote` satisfies this without conversion.',
+    MarkerLike:
+      'audio/timeline.ts: the structural subset of the `Marker` in `AnimationIR` that `checkAgainstMarkers` reads - an id and a time. Same reason: the audio timeline references markers without importing the animation schema, and `Marker` is the schema.',
+    NarrationScriptOptions:
+      'audio/narration.ts: arguments to the script generator - a title, a breath width, an assumed reading rate. Not a domain shape, the same case as `LlmSchemaOptions`.',
   };
 
   /** Derivations of a schema-inferred type are still schema-derived. */

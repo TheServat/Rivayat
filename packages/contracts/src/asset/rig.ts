@@ -134,19 +134,86 @@ export const IkChain = z.object({
 export type IkChain = z.infer<typeof IkChain>;
 
 /**
+ * The anchors that mean the same thing on every rig.
+ *
+ * An anchor's `name` is free-form on purpose - a rig may declare `lantern-hook` or
+ * `saddle` and a shot may address it - but a *free-form* name is useless to anything
+ * that has to compare two skeletons, which is exactly what retargeting does. A walk
+ * cycle authored on one biped can only be measured against another if both agree on
+ * where the ground is; "wherever this particular rig happened to call it" is not an
+ * agreement.
+ *
+ * So the vocabulary is closed and small, and it is the *semantic* half of an anchor:
+ * `ground` is the plane the feet stand on, `head` is the crown, and the distance
+ * between the two is what a stride is proportional to. Everything else here exists
+ * because a prop, a balloon or a gaze needs somewhere to hang.
+ *
+ * The design document (§33) spells these `left_hand` / `right_foot`. They are spelled
+ * `grip-left` / `foot-left` here for two reasons: `Slug` is lowercase-hyphenated
+ * throughout the system, and the rig blueprints already mint `grip-left`, `grip-right`,
+ * `speech` and `eye-line` by those names - so every biped produced so far acquires its
+ * roles for free through {@link anchorRoleOf} rather than needing a migration.
+ */
+export const AnchorRole = z.enum([
+  'root',
+  'head',
+  'eye-line',
+  'speech',
+  'grip-left',
+  'grip-right',
+  'foot-left',
+  'foot-right',
+  'ground',
+  /** The far end of a non-character rig: a branch tip, a flame tip, a wisp. */
+  'tip',
+]);
+export type AnchorRole = z.infer<typeof AnchorRole>;
+
+/**
  * A named attachment point.
  *
  * Where a prop goes in a hand, where a speech balloon anchors, where a particle
  * emitter sits. Declared on the rig so a shot can say "hold the lantern" without
  * knowing anything about bone indices.
+ *
+ * The offset is in the **named bone's local space**, which is what makes an anchor a
+ * point on the asset rather than a point on the canvas: it rotates and travels with
+ * the bone, so a sword held at `grip-right` stays in the hand for the whole clip
+ * without a single line of code naming a bone.
  */
 export const RigAnchor = z.object({
   name: Slug,
+  /**
+   * Which standard point this is, when it is one.
+   *
+   * Optional because most anchors are not standard - a `saddle` is a real anchor with
+   * no cross-rig meaning - and because absent is the honest answer for a rig fitted
+   * before the vocabulary existed. Retargeting reads this, not `name`.
+   */
+  role: AnchorRole.optional(),
   boneId: BoneId,
-  offset: Vec2.default({ x: 0, y: 0 }),
+  offset: Vec2.default({ x: 0, y: 0 }).describe('In the named bone’s local space'),
   rotation: Degrees.default(0),
 });
 export type RigAnchor = z.infer<typeof RigAnchor>;
+
+/**
+ * The standard role this anchor fills, or `undefined` if it fills none.
+ *
+ * Falls back to reading the `name` as a role, which is what lets the rigs the
+ * blueprints already produce - `speech`, `eye-line`, `grip-left`, `grip-right` - carry
+ * their roles without being rewritten. An explicit `role` always wins, so a rig that
+ * happens to call its saddle `head` is not silently reinterpreted.
+ *
+ * Exported because three packages need the same answer - the rig's own validation,
+ * retargeting in `@rv/anim-engine`, and rig fitting in `@rv/asset-engine` - and a
+ * second copy of this fallback is a second place for it to drift.
+ */
+export function anchorRoleOf(anchor: Pick<RigAnchor, 'name' | 'role'>): AnchorRole | undefined {
+  if (anchor.role !== undefined) return anchor.role;
+  const asRole = AnchorRole.safeParse(anchor.name);
+  return asRole.success ? asRole.data : undefined;
+}
 
 export const Rig = z
   .object({
@@ -219,6 +286,14 @@ export const Rig = z
       }
     }
 
+    // An anchor is *addressed by name* - "hold the lantern at `grip-right`" - and by
+    // role once retargeting is involved. Both are lookups, and a lookup with two
+    // answers has none: the prop lands on whichever anchor the array happened to list
+    // first, and it changes the day a rig template is re-ordered. This is the same
+    // class of bug as the dangling references below it - a reference that resolves to
+    // nothing versus one that resolves to the wrong thing - and it is equally silent.
+    const anchorNames = new Set<string>();
+    const anchorRoles = new Set<string>();
     for (const [index, anchor] of rig.anchors.entries()) {
       if (!ids.has(anchor.boneId)) {
         ctx.addIssue({
@@ -226,6 +301,27 @@ export const Rig = z
           message: `anchor ${anchor.name} hangs off unknown bone ${anchor.boneId}`,
           path: ['anchors', index, 'boneId'],
         });
+      }
+
+      if (anchorNames.has(anchor.name)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `duplicate anchor name ${anchor.name}`,
+          path: ['anchors', index, 'name'],
+        });
+      }
+      anchorNames.add(anchor.name);
+
+      const role = anchorRoleOf(anchor);
+      if (role !== undefined) {
+        if (anchorRoles.has(role)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `two anchors claim the ${role} role`,
+            path: ['anchors', index, 'role'],
+          });
+        }
+        anchorRoles.add(role);
       }
     }
 

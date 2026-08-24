@@ -3,6 +3,7 @@ import type { Transform2D } from '@rv/contracts';
 
 import {
   composeTransform,
+  decomposeTransform,
   identityTransform,
   rotateVec,
   transformPoint,
@@ -189,5 +190,62 @@ describe('transformsEqual', () => {
     const nudged = t({ rotation: 1e-12 });
     expect(transformsEqual(identityTransform(), nudged)).toBe(true);
     expect(transformsEqual(identityTransform(), nudged, 0)).toBe(false);
+  });
+});
+
+describe('decomposeTransform - the inverse of composition', () => {
+  // The property that matters: whatever `composeTransform` produced, this recovers the
+  // local it was given. A rig poser needs locals and `evaluate` returns worlds, and an
+  // inverse that is only approximately an inverse would drift a limb over a chain of
+  // four bones.
+  const parents: readonly Transform2D[] = [
+    identityTransform(),
+    t({ position: { x: 40, y: -12 }, rotation: 33 }),
+    t({ scale: { x: 2, y: 0.5 }, skew: { x: 4, y: -7 }, opacity: 0.5 }),
+    t({ position: { x: -8, y: 90 }, rotation: -145, scale: { x: 1.25, y: 3 }, opacity: 0.25 }),
+  ];
+
+  const locals: readonly Transform2D[] = [
+    identityTransform(),
+    t({ position: { x: 7, y: 3 }, rotation: 21 }),
+    t({ position: { x: -60, y: 15 }, rotation: -95, scale: { x: 0.4, y: 1.75 }, opacity: 0.8 }),
+    t({ skew: { x: 11, y: 2 }, anchor: { x: 0.1, y: 0.9 } }),
+  ];
+
+  it('round-trips every component through every parent', () => {
+    for (const parent of parents) {
+      for (const local of locals) {
+        const recovered = decomposeTransform(parent, composeTransform(parent, local));
+        expect(transformsEqual(recovered, local, 1e-9), JSON.stringify({ parent, local })).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it('is the identity against an identity parent', () => {
+    const world = t({ position: { x: 5, y: 6 }, rotation: 12 });
+    expect(decomposeTransform(identityTransform(), world)).toEqual(world);
+  });
+
+  it('keeps the anchor, which composition never inherited in the first place', () => {
+    const parent = t({ anchor: { x: 0, y: 0 } });
+    const world = t({ anchor: { x: 0.2, y: 0.7 } });
+    expect(decomposeTransform(parent, world).anchor).toEqual({ x: 0.2, y: 0.7 });
+  });
+
+  it('returns the world value rather than NaN when a parent component is zero', () => {
+    // A zero scale or a zero opacity destroys the information: every local produces the
+    // same world. Dividing anyway would emit NaN geometry - a frame of nothing, several
+    // thousand frames into a render - which is precisely what the rig schema's own
+    // refinements exist to prevent.
+    const parent = t({ scale: { x: 0, y: 0 }, opacity: 0 });
+    const world = t({ position: { x: 9, y: -4 }, scale: { x: 3, y: 2 }, opacity: 0 });
+    const local = decomposeTransform(parent, world);
+
+    expect(Number.isNaN(local.position.x)).toBe(false);
+    expect(local.position).toEqual({ x: 9, y: -4 });
+    expect(local.scale).toEqual({ x: 3, y: 2 });
+    expect(local.opacity).toBe(0);
   });
 });

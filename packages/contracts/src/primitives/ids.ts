@@ -49,6 +49,8 @@ export const ID_PREFIXES = {
   behaviour: 'bhv',
   marker: 'mrk',
 
+  audioCue: 'auc',
+
   run: 'run',
   job: 'job',
   usage: 'usg',
@@ -170,6 +172,18 @@ export type BehaviourId = z.infer<typeof BehaviourId>;
 export const MarkerId = idSchema('marker', 'MarkerId');
 export type MarkerId = z.infer<typeof MarkerId>;
 
+/**
+ * One entry on the audio timeline.
+ *
+ * Its own kind rather than a reuse of `MarkerId` because the two are different things
+ * that happen to coincide in time: a marker is a cue *point* in the animation document,
+ * an audio cue is a piece of sound with a duration and a provenance. `AudioCue.markerRef`
+ * is how they are tied together - see `audio/timeline.ts` for why that is a reference
+ * and not an identity.
+ */
+export const AudioCueId = idSchema('audioCue', 'AudioCueId');
+export type AudioCueId = z.infer<typeof AudioCueId>;
+
 // ── operations ──────────────────────────────────────────────────────────────
 export const RunId = idSchema('run', 'RunId');
 export type RunId = z.infer<typeof RunId>;
@@ -289,6 +303,9 @@ export class Ids {
   }
   marker(): MarkerId {
     return this.mint('marker');
+  }
+  audioCue(): AudioCueId {
+    return this.mint('audioCue');
   }
   run(): RunId {
     return this.mint('run');

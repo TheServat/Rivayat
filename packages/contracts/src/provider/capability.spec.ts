@@ -58,6 +58,7 @@ describe('enums', () => {
       'embedding',
       'image-edit',
       'image-generation',
+      'speech-synthesis',
       'structured-generation',
       'text-generation',
       'vision-scoring',
@@ -72,6 +73,9 @@ describe('enums', () => {
       'comfyui',
       'pollinations',
       'openai-compatible',
+      'higgs',
+      'chatterbox',
+      'elevenlabs',
     ]);
   });
 
@@ -89,6 +93,7 @@ describe('enums', () => {
       'image-edit',
       'vision-score',
       'embed',
+      'speech-line',
     ]);
   });
 

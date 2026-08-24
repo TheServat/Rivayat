@@ -23,11 +23,17 @@ export * from './story/index';
 
 export * from './asset/asset-spec';
 export * from './asset/rig';
+export * from './asset/representation';
 export * from './asset/asset';
+export * from './asset/clip-library';
 
 export * from './anim/easing';
 export * from './anim/ir';
+export * from './anim/channels';
 export * from './anim/features';
+export * from './anim/motion';
+
+export * from './audio/index';
 
 export * from './provider/index';
 export * from './pipeline/index';

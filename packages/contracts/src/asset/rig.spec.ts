@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { foreignIds, rig, testIds } from '../__fixtures__/builders';
-import { DeformMesh, IkChain, Rig } from './rig';
+import { AnchorRole, DeformMesh, IkChain, Rig, RigAnchor, anchorRoleOf } from './rig';
 
 describe('Rig skeleton integrity', () => {
   it('accepts the fixture', () => {
@@ -306,5 +306,105 @@ describe('DeformMesh indices address real vertices', () => {
 
   it('accepts a mesh that draws no triangles at all', () => {
     expect(DeformMesh.safeParse(mesh([])).success).toBe(true);
+  });
+});
+
+// ── anchors: the named points retargeting aligns to and props hang off ──────
+//
+// An anchor's second job - "hold the lantern at `grip-right`" - is a *lookup by name*,
+// and its first - align this walk cycle to the ground - is a lookup by role. A lookup
+// with two answers has none: the prop lands on whichever anchor the array happened to
+// list first, and it moves the day a template is re-ordered. Same class of silent
+// failure as the dangling references above, from the other direction.
+
+describe('RigAnchor', () => {
+  const ids = testIds();
+
+  it('places the offset in the bone’s own local space, so it travels with the bone', () => {
+    const anchor = RigAnchor.parse({ name: 'saddle', boneId: ids.bone() });
+    expect(anchor.offset).toEqual({ x: 0, y: 0 });
+    expect(anchor.rotation).toBe(0);
+  });
+
+  it('leaves the standard role absent, because most anchors have no cross-rig meaning', () => {
+    expect(RigAnchor.parse({ name: 'saddle', boneId: ids.bone() }).role).toBeUndefined();
+    expect(anchorRoleOf({ name: 'saddle' })).toBeUndefined();
+  });
+
+  it('reads a name that is itself a role, so rigs fitted before the vocabulary carry theirs', () => {
+    // The biped blueprint already mints `grip-left`, `grip-right`, `speech` and
+    // `eye-line`. They acquire their roles here rather than through a migration.
+    for (const name of ['grip-left', 'grip-right', 'speech', 'eye-line'] as const) {
+      expect(anchorRoleOf({ name }), name).toBe(name);
+    }
+  });
+
+  it('lets an explicit role win, so a rig calling its saddle "head" is not reinterpreted', () => {
+    expect(anchorRoleOf({ name: 'head', role: 'saddle' as AnchorRole })).toBe('saddle');
+    expect(anchorRoleOf({ name: 'nest', role: 'tip' })).toBe('tip');
+  });
+
+  it('rejects a role outside the closed vocabulary', () => {
+    expect(AnchorRole.safeParse('left_hand').success).toBe(false);
+    expect(AnchorRole.safeParse('grip-left').success).toBe(true);
+  });
+});
+
+describe('Rig anchor uniqueness', () => {
+  function paths(anchors: readonly Record<string, unknown>[]): string[] {
+    const result = Rig.safeParse({ ...rig(), anchors });
+    return (result.error?.issues ?? []).map((issue) => issue.path.join('.'));
+  }
+
+  const bones = rig().bones as Record<string, unknown>[];
+  const trunk = bones[0]!.id as string;
+  const canopy = bones[1]!.id as string;
+
+  it('accepts distinct names and distinct roles', () => {
+    const result = Rig.safeParse({
+      ...rig(),
+      anchors: [
+        { name: 'nest', boneId: canopy, role: 'tip' },
+        { name: 'roots', boneId: trunk, role: 'ground' },
+        { name: 'plaque', boneId: trunk },
+      ],
+    });
+    expect(result.success, result.success ? '' : z.prettifyError(result.error)).toBe(true);
+  });
+
+  it('rejects two anchors with one name, because "hold the lantern there" must resolve', () => {
+    expect(
+      paths([
+        { name: 'nest', boneId: canopy },
+        { name: 'nest', boneId: trunk },
+      ]),
+    ).toEqual(['anchors.1.name']);
+  });
+
+  it('rejects two anchors claiming one role, because retargeting would align to either', () => {
+    expect(
+      paths([
+        { name: 'sole', boneId: trunk, role: 'ground' },
+        { name: 'roots', boneId: trunk, role: 'ground' },
+      ]),
+    ).toEqual(['anchors.1.role']);
+  });
+
+  it('catches a role collision between an explicit role and a name that is one', () => {
+    expect(
+      paths([
+        { name: 'ground', boneId: trunk },
+        { name: 'sole', boneId: trunk, role: 'ground' },
+      ]),
+    ).toEqual(['anchors.1.role']);
+  });
+
+  it('does not confuse two roleless anchors for a collision', () => {
+    expect(
+      paths([
+        { name: 'plaque', boneId: trunk },
+        { name: 'saddle', boneId: canopy },
+      ]),
+    ).toEqual([]);
   });
 });
