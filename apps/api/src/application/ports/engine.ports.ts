@@ -34,6 +34,8 @@ import type {
 } from '@rv/contracts';
 import type { Result } from '@rv/shared-kernel';
 
+import type { StylePresetList, StyleProbeSheet } from '../../modules/style/style.contracts';
+
 // ── S1 Style ────────────────────────────────────────────────────────────────
 
 export interface DeriveStyleRequest {
@@ -42,11 +44,41 @@ export interface DeriveStyleRequest {
   readonly referenceHashes: readonly Sha256Hex[];
 }
 
+/**
+ * Which style to probe, and on which lane.
+ *
+ * The bible arrives by id rather than by value because probing is the middle of a
+ * three-request conversation - choose, probe, lock - and the document the second request
+ * draws against has to be the one the third request freezes. A body carrying the whole
+ * bible would let those two diverge silently.
+ */
+export interface ProbeStyleRequest {
+  readonly styleBibleId: StyleBibleId;
+  /** `free` is the local ComfyUI lane: four 512px tiles at $0.00. */
+  readonly lane: 'free' | 'paid';
+  readonly signal?: AbortSignal;
+}
+
 export interface StyleEnginePort {
-  /** The curated library. Names only - the bible itself comes from `fromPreset`. */
-  listPresets(): Promise<Result<readonly Slug[]>>;
+  /**
+   * The curated shelf, with enough of each preset to choose between them.
+   *
+   * Cards rather than slugs. A gallery of eleven names can show neither a palette nor a
+   * motion profile, so a client given only names has to guess or materialise all eleven
+   * to find out - and the second mints eleven style bibles to draw a grid.
+   */
+  listPresets(): Promise<Result<StylePresetList>>;
   fromPreset(preset: Slug): Promise<Result<StyleBible>>;
   derive(request: DeriveStyleRequest): Promise<Result<StyleBible>>;
+  /**
+   * Four tiles, generated **before** the lock rather than after it.
+   *
+   * `docs/06-screen-briefs.md` and RV-204 both order this choose → probe → lock, and
+   * that is the order the Style Lab is built in: probing a style you have already
+   * committed to is not a decision, it is a receipt. See `style/probe-seal.ts` for how
+   * that is reconciled with the one guard in front of every image generation.
+   */
+  probe(request: ProbeStyleRequest): Promise<Result<StyleProbeSheet>>;
   /**
    * Freezes the checksum. Every asset dedup key depends on it, so this is the moment
    * the asset library forks.

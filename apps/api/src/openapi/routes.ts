@@ -440,6 +440,18 @@ export const API_ROUTES: readonly ApiRoute[] = [
   },
   {
     method: 'post',
+    path: '/render/deliveries',
+    operationId: 'startDelivery',
+    summary:
+      'Cut every requested format from a master that already exists. 202: the run is ' +
+      'queued. Costs nothing - a delivery calls no provider.',
+    tags: ['render'],
+    requestBody: 'StartDeliveryBody',
+    status: 202,
+    response: 'RunSummary',
+  },
+  {
+    method: 'post',
     path: '/render',
     operationId: 'startRender',
     summary: 'S10/S11: IR to master to per-format reframes.',

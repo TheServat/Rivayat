@@ -21,6 +21,7 @@ import { ConflictError, NotFoundError, type Result, err, ok } from '@rv/shared-k
 import type {
   ProjectPatch,
   ProjectRepository,
+  SeriesPatch,
   SeriesRepository,
 } from '../../application/ports/repository.ports';
 import type { Project, SeriesCard } from '../../application/resources';
@@ -105,5 +106,30 @@ export class InMemorySeriesRepository implements SeriesRepository {
     return Promise.resolve(
       ok([...this.#byId.values()].filter((series) => series.projectId === projectId)),
     );
+  }
+
+  update(id: SeriesId, patch: SeriesPatch, _now: IsoInstant): Promise<Result<SeriesCard>> {
+    const current = this.#byId.get(id);
+    if (current === undefined) return Promise.resolve(err(new NotFoundError('series', id)));
+
+    // Same rule as the project patch: an absent key and a key set to `undefined` both
+    // mean "do not change it", so the undefined entries are dropped before the spread.
+    // Spreading them would blank a field the client did not mention.
+    const changes = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined),
+    ) as Partial<SeriesCard>;
+
+    // `id`, `projectId` and `createdAt` are re-applied after the patch. A patch that
+    // could change any of them would let a client move a series between projects, and
+    // every episode and run pointing at it would silently belong somewhere else.
+    const next: SeriesCard = {
+      ...current,
+      ...changes,
+      id: current.id,
+      projectId: current.projectId,
+      createdAt: current.createdAt,
+    };
+    this.#byId.set(id, next);
+    return Promise.resolve(ok(next));
   }
 }

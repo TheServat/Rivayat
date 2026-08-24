@@ -126,17 +126,21 @@ describe('the pipeline, in process', () => {
     expect(finished.stages.map((stage) => stage.stage)).toEqual(['intake']);
   });
 
-  it('reports a stage whose engine is a scaffold rather than hanging', async () => {
+  it('reports a stage it cannot start rather than hanging', async () => {
+    // This used to assert `UNSUPPORTED_CAPABILITY` from a stubbed S7. Every stage is
+    // implemented now, so the reachable version of the same failure is a stage that is
+    // real and has nothing to work with: it must *settle*, as `failed`, with a diagnosis.
+    // A run that sat in the queue would be the bug this test exists to catch.
     const projectId = await createProject(harness);
 
     const started = await request(harness.server)
       .post('/api/runs')
-      .send({ projectId, stages: ['story'], seed: 1, payload: {} })
+      .send({ projectId, stages: ['sequence'], seed: 1, payload: {} })
       .expect(202);
 
     const finished = await settle(harness, (started.body as RunSummary).id);
     expect(finished.status).toBe('failed');
-    expect(finished.errorCode).toBe('UNSUPPORTED_CAPABILITY');
+    expect(finished.errorCode).toBe('VALIDATION_FAILED');
   });
 
   it('serves an empty ledger for a run that spent nothing, rather than a 404', async () => {

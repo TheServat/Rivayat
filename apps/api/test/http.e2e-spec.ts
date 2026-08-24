@@ -58,38 +58,57 @@ describe('the HTTP surface', () => {
       expect(body.queue.driver).toBe('in-process');
 
       // The assertion this replaces was `implementedStages` having length 12, which was
-      // true of the *registry* and false of the build: nine of those handlers return
+      // true of the *registry* and false of the build: nine of those handlers returned
       // 501. It is the line that put "All twelve stages report as implemented" into
-      // docs/05-remaining-work.md.
-      expect([...body.pipeline.implementedStages].sort()).toEqual(['intake', 'render', 'resolve']);
+      // docs/05-remaining-work.md. The list is spelled out rather than counted for the
+      // same reason: a stage that starts reporting itself implemented has to change this
+      // line, which is where somebody reads it.
+      // Twelve of twelve, and the count is *earned* rather than restated: every handler
+      // in the registry now declares `implemented: true` because it drives a real engine.
+      // The list is spelled out rather than counted so that a stage which stops being
+      // implemented - a deployment with no Skia binding, an engine pulled out - has to
+      // change this line, which is where somebody reads it.
+      expect([...body.pipeline.implementedStages].sort()).toEqual([
+        'cast',
+        'choreograph',
+        'deliver',
+        'intake',
+        'preview',
+        'produce',
+        'render',
+        'resolve',
+        'sequence',
+        'story',
+        'style',
+        'world',
+      ]);
 
-      // Every stage is still registered - the unimplemented ones as stubs - so a run
-      // that asks for one fails with a diagnosis instead of hanging on a missing key.
+      // The partition still has to hold. `stubbedStages` being empty is the claim; the
+      // line below is what stops it from being empty because the two lists disagree.
       expect(body.pipeline.registeredStages).toHaveLength(12);
-      expect(body.pipeline.stubbedStages).toHaveLength(9);
+      expect(body.pipeline.stubbedStages).toHaveLength(0);
       expect([...body.pipeline.implementedStages, ...body.pipeline.stubbedStages].sort()).toEqual(
         [...body.pipeline.registeredStages].sort(),
       );
     });
 
-    it('routes a stage it reports as stubbed, and refuses it with the package that owes it', async () => {
-      // The two lists are not decoration: this is the difference they describe. A
-      // stubbed stage is wired, validated and reachable - it just cannot do the work.
-      const health = await request(harness.server).get('/api/health').expect(200);
-      const stubbed = (health.body as { pipeline: { stubbedStages: string[] } }).pipeline
-        .stubbedStages;
-      expect(stubbed).toContain('story');
-
+    it('fails a stage whose payload is missing with a diagnosis, rather than hanging', async () => {
+      // What this used to assert - "a stubbed stage refuses with the package that owes
+      // it" - has no subject left: every stage is implemented, `stubbedStages` is empty,
+      // and a test that picked a stage at random to prove a stub would be asserting
+      // nothing. The *behaviour* it was protecting is still the one that matters and is
+      // still reachable: a run that asks for a stage and gives it nothing to work with
+      // must settle as `failed` with a diagnosis, not sit in the queue.
       const project = await request(harness.server)
         .post('/api/projects')
-        .send({ name: 'Stub check', description: 'A project that asks for a stubbed stage.' })
+        .send({ name: 'Payload check', description: 'A run that asks S6 for nothing.' })
         .expect(201);
 
       const started = await request(harness.server)
         .post('/api/runs')
         .send({
           projectId: (project.body as { id: string }).id,
-          stages: ['story'],
+          stages: ['produce'],
           seed: 1,
           payload: {},
         })
@@ -102,12 +121,14 @@ describe('the HTTP surface', () => {
           errorCode: string | null;
         };
         if (run.status === 'failed') {
-          expect(run.errorCode).toBe('UNSUPPORTED_CAPABILITY');
+          // A validation failure, naming the payload - not an internal error, and not a
+          // 501 about a package that is finished.
+          expect(run.errorCode).toBe('VALIDATION_FAILED');
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      throw new Error('the stubbed stage never settled');
+      throw new Error('the stage never settled');
     });
   });
 
@@ -195,22 +216,19 @@ describe('the HTTP surface', () => {
     });
 
     it('501 for a route whose engine package is still a scaffold, naming the package', async () => {
-      const response = await request(harness.server).get('/api/style/presets').expect(501);
+      // `@rv/narrative-memory` is the scaffold this asserts against now; S1 style used to
+      // be the example and its package is finished. The taxonomy is the point rather than
+      // the route: `unsupported` maps to 501, while `internal` would map to 500 and invite
+      // a retry of something that cannot work until the package is written.
+      const response = await request(harness.server)
+        .get('/api/narrative/episodes/ep_01J0000000000000000000000Z/continuity')
+        .expect(501);
 
       const body = response.body as ErrorBody;
       expect(body.error.kind).toBe('unsupported');
       expect(body.error.code).toBe('UNSUPPORTED_CAPABILITY');
-      expect(body.error.context).toMatchObject({ provider: '@rv/style-engine' });
+      expect(body.error.context).toMatchObject({ provider: '@rv/narrative-memory' });
       expect(body.error.retryable).toBe(false);
-    });
-
-    it('501 for the narrative graph, naming @rv/narrative-memory', async () => {
-      const response = await request(harness.server)
-        .get('/api/narrative/episodes/ep_01J0000000000000000000000Z/continuity')
-        .expect(501);
-      expect((response.body as ErrorBody).error.context).toMatchObject({
-        provider: '@rv/narrative-memory',
-      });
     });
 
     it('400 with every bad field named, not just the first', async () => {

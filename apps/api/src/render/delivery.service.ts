@@ -93,12 +93,25 @@ export class DeliveryService {
   }
 }
 
-/** The render key a run recorded, or `null` if it never finished a render. */
+/**
+ * The render key a run recorded, or `null` if it never finished one.
+ *
+ * Both stages that know a render key record it. S10 records the render it produced;
+ * S11 records the render it *cut from*, which is the only way a delivery-only run - a
+ * re-delivery of a master rendered last week, which is a legitimate thing to ask for -
+ * can answer "what did you produce". Searching for the artefact rather than for a
+ * particular stage is also what keeps this from needing a change when a third stage
+ * files something under the same address.
+ */
 export function renderKeyOf(run: RunSummary): string | null {
+  let found: string | null = null;
   for (const stage of run.stages) {
-    if (stage.stage !== 'render' || stage.status !== 'succeeded') continue;
+    if (stage.status !== 'succeeded') continue;
+    if (stage.stage !== 'render' && stage.stage !== 'deliver') continue;
     const artifact = stage.artifacts.find((ref) => ref.startsWith(RENDER_KEY_PREFIX));
-    if (artifact !== undefined) return artifact.slice(RENDER_KEY_PREFIX.length);
+    // The later stage wins: a run that rendered and then delivered has one key, and a
+    // run that delivered a different master than it rendered delivered *that* one.
+    if (artifact !== undefined) found = artifact.slice(RENDER_KEY_PREFIX.length);
   }
-  return null;
+  return found;
 }

@@ -43,6 +43,7 @@ const CASES: readonly {
       call: () => style.fromPreset(anything),
     },
     { label: 'style.derive', owner: '@rv/style-engine', call: () => style.derive(anything) },
+    { label: 'style.probe', owner: '@rv/style-engine', call: () => style.probe(anything) },
     { label: 'style.lock', owner: '@rv/style-engine', call: () => style.lock(anything) },
     {
       label: 'story.generateSeriesBible',

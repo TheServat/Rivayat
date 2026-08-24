@@ -42,6 +42,10 @@ import type {
   SeriesRepository,
   StyleBibleReader,
 } from '../application/ports/repository.ports';
+import type { AssetDemandService } from '../assets/asset-demand.service';
+import type { AssetLibraryQuery } from '../assets/asset-library.query';
+import type { ProduceRecordStore } from '../assets/produce-record.store';
+import type { RegenerateAssetVersionUseCase } from '../assets/regenerate-asset.use-case';
 import type { AppConfig } from '../config/app-config';
 import { loadConfig } from '../config/app-config';
 import type { LedgerService } from '../cost/ledger.service';
@@ -59,6 +63,8 @@ import { AssetsController } from './assets/assets.controller';
 import { EpisodesController } from './episodes/episodes.controller';
 import { HealthController } from './health/health.controller';
 import { NarrativeController } from './narrative/narrative.controller';
+import type { SnapshotService } from '../narrative/snapshot.service';
+import type { CharacterStateStore } from '../story/cast.store';
 import { PipelineController } from './pipeline/pipeline.controller';
 import { ProjectsController } from './projects/projects.controller';
 import { RenderController } from './render/render.controller';
@@ -135,8 +141,23 @@ describe('controllers propagate a storage failure rather than reporting success'
   });
 
   it('assets', async () => {
-    const controller = new AssetsController(failing(), failing(), failing<AssetRepository>());
+    const controller = new AssetsController(
+      failing(),
+      failing(),
+      failing<AssetRepository>(),
+      failing<AssetLibraryQuery>(),
+      failing<AssetDemandService>(),
+      failing<ProduceRecordStore>(),
+      failing<RegenerateAssetVersionUseCase>(),
+    );
     await expectFailure(controller.findOne('ast_01J0000000000000000000000A'));
+    // Every read path has to fail the same way: the library list touches two stores, and
+    // a page that swallowed one of them would show a short list rather than an error.
+    await expectFailure(controller.list({ limit: 10 }));
+    await expectFailure(controller.plan());
+    await expectFailure(
+      controller.produceReport('ast_01J0000000000000000000000A', 'asv_01J0000000000000000000000B'),
+    );
   });
 
   it('runs', async () => {
@@ -168,7 +189,11 @@ describe('controllers propagate a storage failure rather than reporting success'
 describe('controllers over a scaffolded engine refuse in the taxonomy', () => {
   /** The four routes an e2e request cannot reach with a body a schema will accept. */
   it('narrative ingest, retrieve and continuity', async () => {
-    const controller = new NarrativeController(new StubNarrativeMemory());
+    const controller = new NarrativeController(
+      new StubNarrativeMemory(),
+      failing<SnapshotService>(),
+      failing<CharacterStateStore>(),
+    );
     const outcomes: Result<unknown>[] = [
       await controller.ingest(SERIES, undefined as never),
       await controller.retrieve(undefined as never),
@@ -184,7 +209,12 @@ describe('controllers over a scaffolded engine refuse in the taxonomy', () => {
   });
 
   it('render start', async () => {
-    const controller = new RenderController(new StubRenderEngine(), new ReframeService({ ids }));
+    const controller = new RenderController(
+      new StubRenderEngine(),
+      new ReframeService({ ids }),
+      failing<PipelineRunner>(),
+      failing<RunRepository>(),
+    );
     const outcome = await controller.start({
       ir: undefined as never,
       formats: ['yt-1080p'],
@@ -200,6 +230,8 @@ describe('controllers over a scaffolded engine refuse in the taxonomy', () => {
     const outcome = new RenderController(
       new StubRenderEngine(),
       new ReframeService({ ids }),
+      failing<PipelineRunner>(),
+      failing<RunRepository>(),
     ).formats();
     expect(isErr(outcome)).toBe(false);
     if (isErr(outcome)) return;

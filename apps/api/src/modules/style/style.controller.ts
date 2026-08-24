@@ -1,22 +1,33 @@
 /**
- * S1 Style over HTTP.
+ * S1 Style over HTTP - the five requests the Style Lab makes, in the order it makes them.
  *
- * Every route here is wired to `StyleEnginePort`, which is bound to a stub because
- * `@rv/style-engine` exports nothing but its own name today. The routes exist anyway:
- * the request is validated against the real schemas, the 501 carries the package that
- * owes the work, and the OpenAPI document lists the endpoints a client will eventually
- * call. When the engine lands, one `useValue` in `app.module.ts` changes and this file
- * does not.
+ * `GET /presets` → `POST /from-preset` (or `POST /derive`) → `POST /:id/probe` →
+ * `POST /:id/lock`. That order is the product decision and it is not the order
+ * `GenerateStyleProbeUseCase` was written for; `style/probe-seal.ts` holds the whole of
+ * why, and this controller is deliberately ignorant of it.
+ *
+ * The one thing worth noticing here is what each route *costs*. `presets` is a pure
+ * projection of a module-level constant. `from-preset` and `lock` are one row each.
+ * `probe` is four image generations - free on the local lane, real money on the paid one
+ * - and `derive` is a vision call over up to sixteen references. A client that treats
+ * them as interchangeable will be surprised, so the two expensive ones are POSTs with
+ * bodies rather than GETs a browser might prefetch.
  */
 
 import { Body, Controller, Get, Inject, Param, Post } from '@nestjs/common';
-import { Slug, StyleBibleId, type StyleBible } from '@rv/contracts';
+import { StyleBibleId, type StyleBible } from '@rv/contracts';
 import type { Result } from '@rv/shared-kernel';
 
 import type { StyleEnginePort } from '../../application/ports/engine.ports';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 import { STYLE_ENGINE_PORT } from '../../tokens';
-import { DeriveStyleBody, FromPresetBody } from './style.contracts';
+import {
+  DeriveStyleBody,
+  FromPresetBody,
+  ProbeStyleBody,
+  type StylePresetList,
+  type StyleProbeSheet,
+} from './style.contracts';
 
 @Controller('style')
 export class StyleController {
@@ -26,8 +37,14 @@ export class StyleController {
     this.#engine = engine;
   }
 
+  /**
+   * The shelf, with enough of each preset to choose between them.
+   *
+   * Free and cacheable: `STYLE_PRESETS` is compiled at module load, so this reads no
+   * row and calls no provider.
+   */
   @Get('presets')
-  presets(): Promise<Result<readonly Slug[]>> {
+  presets(): Promise<Result<StylePresetList>> {
     return this.#engine.listPresets();
   }
 
@@ -43,6 +60,21 @@ export class StyleController {
     @Body(new ZodValidationPipe(DeriveStyleBody)) body: DeriveStyleBody,
   ): Promise<Result<StyleBible>> {
     return this.#engine.derive({ brief: body.brief, referenceHashes: body.referenceHashes });
+  }
+
+  /**
+   * Four tiles, so a human can say yes before anything is committed to.
+   *
+   * Declared before `:id/lock` for no routing reason - both are two-segment - but read
+   * in the order the screen calls them. On the free lane this is four 512px ComfyUI
+   * draws at $0.00, which is what makes rejecting six candidate styles cost nothing.
+   */
+  @Post(':id/probe')
+  probe(
+    @Param('id', new ZodValidationPipe(StyleBibleId)) id: StyleBibleId,
+    @Body(new ZodValidationPipe(ProbeStyleBody)) body: ProbeStyleBody,
+  ): Promise<Result<StyleProbeSheet>> {
+    return this.#engine.probe({ styleBibleId: id, lane: body.lane });
   }
 
   /**

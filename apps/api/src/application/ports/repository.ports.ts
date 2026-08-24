@@ -37,6 +37,17 @@ import type { Project, RunStageResult, RunSummary, RunStatus, SeriesCard } from 
  */
 export type ProjectPatch = { [K in keyof Project]?: Project[K] | undefined };
 
+/**
+ * The same, for a series.
+ *
+ * A patch rather than a second write method, and the mirror of `ProjectPatch` rather
+ * than something narrower, because the two callers want different fields: the Story
+ * screen corrects the *premise* an author typed, and S2 sets `hasBible` once it has
+ * produced the plan. A `setPremise` and a `markPlanned` would be two methods that
+ * cannot be applied in one write.
+ */
+export type SeriesPatch = { [K in keyof SeriesCard]?: SeriesCard[K] | undefined };
+
 export interface ProjectRepository {
   create(project: Project): Promise<Result<Project>>;
   findById(id: ProjectId): Promise<Result<Project | null>>;
@@ -48,6 +59,15 @@ export interface SeriesRepository {
   create(series: SeriesCard): Promise<Result<SeriesCard>>;
   findById(id: SeriesId): Promise<Result<SeriesCard | null>>;
   listByProject(projectId: ProjectId): Promise<Result<readonly SeriesCard[]>>;
+  /**
+   * Corrects what the author wrote, and records what S2 produced.
+   *
+   * `now` is passed rather than read because nothing below the composition root reads a
+   * wall clock (#1). `SeriesCard` carries no `updatedAt` today, so it is used only to
+   * keep the signature identical to `ProjectRepository.update` - the day the card grows
+   * one, no caller changes.
+   */
+  update(id: SeriesId, patch: SeriesPatch, now: IsoInstant): Promise<Result<SeriesCard>>;
 }
 
 export interface EpisodeRepository {

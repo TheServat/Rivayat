@@ -36,12 +36,14 @@ import type {
   AssetProductionRequest,
   DeriveStyleRequest,
   NarrativeMemoryPort,
+  ProbeStyleRequest,
   RenderOutput,
   RenderPort,
   RenderRequest,
   StoryEnginePort,
   StyleEnginePort,
 } from '../../application/ports/engine.ports';
+import type { StylePresetList, StyleProbeSheet } from '../../modules/style/style.contracts';
 
 const STYLE_ENGINE = '@rv/style-engine';
 const STORY_ENGINE = '@rv/story-engine';
@@ -49,8 +51,17 @@ const ASSET_ENGINE = '@rv/asset-engine';
 const NARRATIVE_MEMORY = '@rv/narrative-memory';
 const RENDER_ENGINE = '@rv/render-engine';
 
+/**
+ * Kept after S1 was wired for real, and not as a leftover.
+ *
+ * `app.module.ts` binds `StyleEngineAdapter` now, so nothing reaches this in a running
+ * process. It stays because it is the only thing that can stand in for the engine in a
+ * context that has no database, no blob store and no image lane - and because deleting
+ * it would leave the *shape* of a refusal untested for the one port most likely to be
+ * unwired again in a deployment that turns generation off.
+ */
 export class StubStyleEngine implements StyleEnginePort {
-  listPresets(): Promise<Result<readonly Slug[]>> {
+  listPresets(): Promise<Result<StylePresetList>> {
     return notImplementedAsync('style presets', STYLE_ENGINE);
   }
   fromPreset(_preset: Slug): Promise<Result<StyleBible>> {
@@ -58,6 +69,9 @@ export class StubStyleEngine implements StyleEnginePort {
   }
   derive(_request: DeriveStyleRequest): Promise<Result<StyleBible>> {
     return notImplementedAsync('style derivation from references', STYLE_ENGINE);
+  }
+  probe(_request: ProbeStyleRequest): Promise<Result<StyleProbeSheet>> {
+    return notImplementedAsync('style probe sheet', STYLE_ENGINE);
   }
   lock(_id: StyleBibleId): Promise<Result<StyleBible>> {
     return notImplementedAsync('style lock', STYLE_ENGINE);

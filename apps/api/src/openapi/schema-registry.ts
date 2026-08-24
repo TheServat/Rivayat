@@ -35,6 +35,7 @@ import { ErrorEnvelope } from '../common/error-envelope';
 import { ResolveAssetsBody, SearchAssetsBody } from '../modules/assets/assets.contracts';
 import { HealthReport } from '../modules/health/health.contracts';
 import { StartRunBody } from '../modules/pipeline/pipeline.contracts';
+import { StartDeliveryBody } from '../modules/render/deliveries.contracts';
 import { RenderBody } from '../modules/render/render.contracts';
 import {
   CreateProjectRequest,
@@ -89,6 +90,7 @@ export const API_SCHEMAS = {
   ReframeBody,
   ReframePlanSet,
   RunDelivery,
+  StartDeliveryBody,
 
   // compositions
   StoreCompositionBody,

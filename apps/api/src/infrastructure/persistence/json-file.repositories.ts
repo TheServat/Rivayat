@@ -38,6 +38,7 @@ import { z } from 'zod';
 import type {
   ProjectPatch,
   ProjectRepository,
+  SeriesPatch,
   SeriesRepository,
 } from '../../application/ports/repository.ports';
 import { Project, SeriesCard } from '../../application/resources';
@@ -157,22 +158,21 @@ export class JsonFileSeriesRepository implements SeriesRepository {
   readonly #inner = new InMemorySeriesRepository();
   readonly #path: string;
   readonly #logger: Logger;
-  readonly #known: SeriesCard[] = [];
+  readonly #known = new Map<SeriesId, SeriesCard>();
 
   constructor(options: JsonFileStoreOptions) {
     this.#path = join(options.workspaceDir, 'series.json');
     this.#logger = options.logger.child({ component: 'series-store' });
     for (const card of readCollection(this.#path, SeriesCard, this.#logger)) {
       void this.#inner.create(card);
-      this.#known.push(card);
+      this.#known.set(card.id, card);
     }
   }
 
   async create(series: SeriesCard): Promise<Result<SeriesCard>> {
     const created = await this.#inner.create(series);
     if (isErr(created)) return created;
-    this.#known.push(created.value);
-    writeCollection(this.#path, this.#known, this.#logger);
+    this.#flush(created.value);
     return created;
   }
 
@@ -182,6 +182,26 @@ export class JsonFileSeriesRepository implements SeriesRepository {
 
   listByProject(projectId: ProjectId): Promise<Result<readonly SeriesCard[]>> {
     return this.#inner.listByProject(projectId);
+  }
+
+  async update(id: SeriesId, patch: SeriesPatch, now: IsoInstant): Promise<Result<SeriesCard>> {
+    const updated = await this.#inner.update(id, patch, now);
+    if (isErr(updated)) return updated;
+    this.#flush(updated.value);
+    return updated;
+  }
+
+  /**
+   * Keyed by id rather than appended.
+   *
+   * An append-only list re-wrote the whole collection on every `create`, which was
+   * correct only because nothing could change a row. An update can, and a second copy
+   * of the same series in the file would be read back as a create conflict on the next
+   * boot - silently dropping the edit that caused it.
+   */
+  #flush(card: SeriesCard): void {
+    this.#known.set(card.id, card);
+    writeCollection(this.#path, [...this.#known.values()], this.#logger);
   }
 }
 

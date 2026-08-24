@@ -56,6 +56,7 @@ import { DELIVERY_MANIFEST_FILE, RunDelivery, type DeliveredFile } from './deliv
 import { toValidationError } from '../common/zod-validation.pipe';
 import type { CompositionStore } from '../modules/compositions/composition.store';
 import type { StageContext, StageHandler, StageOutput } from '../pipeline/stage';
+import { upstreamCompositionId } from './composition-source';
 import {
   RenderStagePayload,
   RenderStageRequest,
@@ -131,7 +132,7 @@ export class RenderStageHandler implements StageHandler {
   }
 
   async execute(context: StageContext): Promise<Result<StageOutput, AppError>> {
-    const request = RenderStageRequest.safeParse(context.job.payload.render);
+    const request = RenderStageRequest.safeParse(withUpstream(context));
     if (!request.success) return err(toValidationError(request.error, 'run.payload.render'));
 
     const resolved = await this.#resolve(request.data);
@@ -337,6 +338,31 @@ export class RenderStageHandler implements StageHandler {
       );
     }
   }
+}
+
+/**
+ * The render request, with the composition this run already made filled in.
+ *
+ * A run carries one payload for every stage (`PipelineRunner` hands each job the same
+ * object), so a run that starts at S8 cannot name in its payload the composition S8 has
+ * not produced yet. Without this, `stages: ['choreograph', 'render']` - the obvious way
+ * to ask for an episode - would fail at S10 with "names no composition" about a
+ * composition sitting in the store.
+ *
+ * A fallback and never an override: a payload that names its own `ir` or
+ * `compositionId` is making a claim about what is being rendered, and substituting
+ * something else - even something this run made - is the failure ADR-0001 is about.
+ */
+function withUpstream(context: StageContext): unknown {
+  const raw = context.job.payload.render;
+  const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null;
+  if (record !== null && (record.ir !== undefined || record.compositionId !== undefined)) {
+    return raw;
+  }
+
+  const upstream = upstreamCompositionId(context.run);
+  if (upstream === null) return raw;
+  return { ...(record ?? {}), compositionId: upstream };
 }
 
 /**

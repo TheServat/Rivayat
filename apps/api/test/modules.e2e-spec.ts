@@ -213,18 +213,78 @@ describe('the remaining modules', () => {
   });
 
   describe('style', () => {
-    it('501s every route, naming the package', async () => {
-      const responses = await Promise.all([
-        request(harness.server).post('/api/style/from-preset').send({ preset: 'ink-comic' }),
-        request(harness.server).post(`/api/style/${ABSENT.style}/lock`).send({}),
-      ]);
+    it('serves a gallery a client can render, not a list of names', async () => {
+      const response = await request(harness.server).get('/api/style/presets').expect(200);
+      const body = response.body as {
+        presets: {
+          id: string;
+          name: { fa: string };
+          draft: { visual: unknown; motion: unknown };
+        }[];
+      };
 
-      for (const response of responses) {
-        expect(response.status).toBe(501);
-        expect((response.body as ErrorBody).error.context).toMatchObject({
-          provider: '@rv/style-engine',
-        });
+      expect(body.presets.length).toBeGreaterThan(1);
+      // The whole point of the shape: a card carries the blocks the gallery *renders*.
+      // A list of slugs would force a client to guess or to mint a bible per tile.
+      for (const preset of body.presets) {
+        expect(preset.name.fa.length).toBeGreaterThan(0);
+        expect(preset.draft.visual).toBeTypeOf('object');
+        expect(preset.draft.motion).toBeTypeOf('object');
       }
+    });
+
+    it('materialises a preset unlocked, then locks it once and refuses the second lock', async () => {
+      const created = await request(harness.server)
+        .post('/api/style/from-preset')
+        .send({ preset: 'paper-cutout' })
+        .expect(201);
+      const bible = created.body as { id: string; checksum: string; lockedAt: string | null };
+
+      // Unlocked on purpose: locking is a decision a human makes after seeing a probe
+      // sheet, and a factory that produced locked documents would let a style reach the
+      // image models before anyone had looked at it.
+      expect(bible.lockedAt).toBeNull();
+      expect(bible.checksum).toMatch(/^[0-9a-f]{64}$/);
+
+      const locked = await request(harness.server)
+        .post(`/api/style/${bible.id}/lock`)
+        .send({})
+        .expect(201);
+      const frozen = locked.body as { checksum: string; lockedAt: string | null };
+      expect(frozen.lockedAt).not.toBeNull();
+      // The checksum is content-derived, so locking an unedited bible cannot move it -
+      // which is what makes a probe sheet's checksum a promise the lock keeps.
+      expect(frozen.checksum).toBe(bible.checksum);
+
+      // A second lock is a fork, and the domain says so rather than silently re-locking.
+      await request(harness.server).post(`/api/style/${bible.id}/lock`).send({}).expect(409);
+    });
+
+    it('probes an unlocked candidate rather than demanding a lock first', async () => {
+      const created = await request(harness.server)
+        .post('/api/style/from-preset')
+        .send({ preset: 'paper-cutout' })
+        .expect(201);
+      const id = (created.body as { id: string }).id;
+
+      // The harness registers no image adapter, so the free lane is unwired. The refusal
+      // that matters is *which* one: "no adapter is wired to the free lane" proves the
+      // probe got past the lock guard on an unlocked bible, which is the whole product
+      // decision. A 400 about the style not being locked would mean it did not.
+      const probed = await request(harness.server)
+        .post(`/api/style/${id}/probe`)
+        .send({ lane: 'free' })
+        .expect(400);
+      const message = (probed.body as { error: { message: string } }).error.message;
+      expect(message).toContain('lane');
+      expect(message).not.toContain('not locked');
+    });
+
+    it('404s a probe of a style bible that does not exist', async () => {
+      await request(harness.server)
+        .post(`/api/style/${ABSENT.style}/probe`)
+        .send({ lane: 'free' })
+        .expect(404);
     });
 
     it('rejects a preset name that is not a slug before reaching the engine', async () => {
