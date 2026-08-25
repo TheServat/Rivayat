@@ -48,6 +48,20 @@ export class StyleController {
     return this.#engine.listPresets();
   }
 
+  /**
+   * One bible by id, so a project can show the style it already locked.
+   *
+   * A GET among four POSTs, and correctly so: it reads one row, changes nothing, and is
+   * safe for a browser to prefetch - which is exactly what the neighbouring `probe` is
+   * not.
+   */
+  @Get(':id')
+  find(
+    @Param('id', new ZodValidationPipe(StyleBibleId)) id: StyleBibleId,
+  ): Promise<Result<StyleBible>> {
+    return this.#engine.find(id);
+  }
+
   @Post('from-preset')
   fromPreset(
     @Body(new ZodValidationPipe(FromPresetBody)) body: FromPresetBody,

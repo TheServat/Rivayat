@@ -106,6 +106,11 @@ export default {
       'The style’s fingerprint is frozen, and every asset made from now on derives its dedup key from it. Changing style later forks the asset library instead of reusing any of it.',
     confirmName: 'Locking: {name}',
     confirm: 'Yes, lock it',
+    forProject: 'For {project}',
+    noProject: 'No project selected, so this lock will not be recorded on one.',
+    detached: 'The style is locked, but this project does not point at it yet.',
+    attach: 'Point the project at it',
+    attaching: 'Attaching…',
   },
 
   empty: {

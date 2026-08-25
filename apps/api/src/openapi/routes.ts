@@ -187,6 +187,17 @@ export const API_ROUTES: readonly ApiRoute[] = [
     notImplemented: true,
   },
   {
+    method: 'get',
+    path: '/style/{id}',
+    operationId: 'getStyleBible',
+    summary: 'One style bible by id, so a project can show the style it locked.',
+    tags: ['style'],
+    params: [idParam('id', 'Style bible id, `sty_<ULID>`.')],
+    status: 501,
+    response: 'StyleBible',
+    notImplemented: true,
+  },
+  {
     method: 'post',
     path: '/style/{id}/lock',
     operationId: 'lockStyle',

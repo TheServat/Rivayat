@@ -1,15 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
-import { StudioApi } from '../../api/client';
+import { StudioApi, useStudioApi } from '../../api/client';
 import { flush, mountStudio } from '../../test/harness';
 
 import StyleLabView from './StyleLabView.vue';
 
 const PATH = '/style-lab';
 
+/**
+ * The lab, opened for a project that has not chosen a style.
+ *
+ * Explicit about the project because the screen now resolves one: the first fixture
+ * project has a style locked already, so opening on it would show a finished lock, and
+ * every test below this is about the path that gets there.
+ */
 async function open(locale: 'fa' | 'en' = 'en'): Promise<ReturnType<typeof mountStudio>> {
-  const wrapper = await mountStudio(StyleLabView, { locale, path: PATH });
-  await flush();
+  const wrapper = await mountStudio(StyleLabView, {
+    locale,
+    path: `${PATH}?project=prj_01JQZM5P9R7S2T4V6W8X0Y1Z3A`,
+  });
+  await flush(8);
   return wrapper;
 }
 
@@ -338,5 +348,76 @@ describe('reduced motion gets a strip, not a still', () => {
     expect(new Set(atOne).size).toBeGreaterThan(1);
 
     preferReducedMotion(false);
+  });
+});
+
+/**
+ * A lock belongs to a project, which is the thing this screen used not to know.
+ *
+ * The Projects screen has linked here with `?project=` since it was written and this
+ * screen ignored the parameter, so locking minted a bible attached to nothing: a project
+ * read "no style chosen" however many times someone locked one, and every stage
+ * downstream refused to run for want of a style that had in fact been chosen three times.
+ */
+describe('the lock belongs to a project', () => {
+  const WITH_STYLE = 'prj_01JQZK3M7X8YB4N2VTC6WPHRDE';
+  const WITHOUT_STYLE = 'prj_01JQZM5P9R7S2T4V6W8X0Y1Z3A';
+
+  async function openFor(project: string): Promise<ReturnType<typeof mountStudio>> {
+    const wrapper = await mountStudio(StyleLabView, {
+      locale: 'en',
+      path: `${PATH}?project=${project}`,
+    });
+    await flush(8);
+    return wrapper;
+  }
+
+  it('shows the style a returning project already locked', async () => {
+    const wrapper = await openFor(WITH_STYLE);
+
+    // Not the empty gallery a returning project used to get.
+    expect(wrapper.text()).toContain('This style is locked');
+    expect(wrapper.text()).not.toContain('Not made yet');
+  });
+
+  it('names the project the lock will be recorded on', async () => {
+    const wrapper = await openFor(WITHOUT_STYLE);
+
+    // The consequence is now project-shaped, so the button says which project. A studio
+    // holding three projects and a lock button naming none of them is a coin toss.
+    expect(wrapper.text()).toContain('The Cartographer');
+  });
+
+  it('points the project at the bible it just locked', async () => {
+    const wrapper = await openFor(WITHOUT_STYLE);
+    await chooseFirst(wrapper);
+
+    await wrapper.find('#rv-style-lock-trigger').trigger('click');
+    await wrapper.vm.$nextTick();
+    await wrapper.find('#rv-style-lock-confirm-yes').trigger('click');
+    await flush(12);
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('This style is locked');
+    // The assertion that matters: the *project* changed, not just the panel. Asking the
+    // server rather than reading the screen, because the screen is what was lying before.
+    const after = await useStudioApi().listProjects();
+    const project = after.projects.find((entry) => entry.id === WITHOUT_STYLE);
+    expect(project?.styleBibleId).not.toBeNull();
+  });
+
+  it('offers to finish the job when the lock landed and the attach did not', async () => {
+    const wrapper = await openFor(WITHOUT_STYLE);
+    await chooseFirst(wrapper);
+
+    await wrapper.find('#rv-style-lock-trigger').trigger('click');
+    await wrapper.vm.$nextTick();
+    await wrapper.find('#rv-style-lock-confirm-yes').trigger('click');
+    await flush(12);
+    await wrapper.vm.$nextTick();
+
+    // A lock that attached leaves nothing to retry. The control exists for the state
+    // where it did not, and showing it here would be a permanent nag.
+    expect(wrapper.text()).not.toContain('does not point at it yet');
   });
 });

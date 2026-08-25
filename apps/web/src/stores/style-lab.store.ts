@@ -1,4 +1,4 @@
-import type { Slug, StyleBible } from '@rv/contracts';
+import type { ProjectId, Slug, StyleBible } from '@rv/contracts';
 import { defineStore } from 'pinia';
 import { computed, ref, type ComputedRef, type Ref } from 'vue';
 
@@ -48,11 +48,16 @@ export interface StyleLabStore {
   readonly isEmpty: ComputedRef<boolean>;
   readonly isLocked: ComputedRef<boolean>;
   readonly estimate: ComputedRef<ProbeEstimate>;
+  /** Which project this lock will belong to, and `null` when the studio has none. */
+  readonly projectId: Ref<ProjectId | null>;
+  readonly attaching: Ref<ActionStatus>;
   load: () => Promise<void>;
+  useProject: (projectId: ProjectId | null) => Promise<void>;
   select: (id: Slug) => Promise<void>;
   setLane: (lane: StyleProbeLane) => void;
   probe: () => Promise<void>;
   lock: () => Promise<void>;
+  attach: () => Promise<void>;
 }
 
 /**
@@ -99,7 +104,16 @@ export const useStyleLabStore = defineStore('style-lab', (): StyleLabStore => {
   const adopting = ref<ActionStatus>('idle');
   const probing = ref<ActionStatus>('idle');
   const locking = ref<ActionStatus>('idle');
+  const attaching = ref<ActionStatus>('idle');
   const actionError = ref<ApiError | null>(null);
+  /**
+   * Which project a lock belongs to.
+   *
+   * `null` is a real state and not a missing value: the shelf is worth browsing before
+   * a project exists, and a screen opened without one should say what it cannot do
+   * rather than refuse to render.
+   */
+  const projectId = ref<ProjectId | null>(null);
 
   const selected = computed(
     () => presets.value.find((preset) => preset.id === selectedId.value) ?? null,
@@ -119,6 +133,19 @@ export const useStyleLabStore = defineStore('style-lab', (): StyleLabStore => {
     return new ApiError({ failure: 'network', code, message, cause: caught });
   }
 
+  /**
+   * The shelf, and the project's own style if it already has one.
+   *
+   * The second half is the part that was missing. This screen used to know only about
+   * presets, so a project that had locked a style last week opened on an empty gallery
+   * saying "no style chosen yet" - and locking again minted a second bible that also
+   * attached to nothing.
+   *
+   * A style that fails to load is not an error for the screen: the shelf is still usable
+   * and choosing from it is still the right next action. It surfaces on `actionError`,
+   * where a failed action belongs, rather than replacing eleven working cards with a
+   * retry button.
+   */
   async function load(): Promise<void> {
     status.value = 'loading';
     error.value = null;
@@ -132,6 +159,40 @@ export const useStyleLabStore = defineStore('style-lab', (): StyleLabStore => {
         caught,
         'style-presets-load-failed',
         'the preset shelf could not be loaded',
+      );
+    }
+  }
+
+  /**
+   * Adopts a project, and shows the style it has already locked.
+   *
+   * Separate from `load` and never awaited by it, because the shelf does not depend on a
+   * project: eleven cards are worth rendering the moment they arrive, and making them
+   * wait on an unrelated request delays the whole screen for a lookup that may return
+   * nothing.
+   *
+   * A style that fails to load is not an error for the screen. The shelf is still usable
+   * and choosing from it is still the right next action, so this surfaces on
+   * `actionError` rather than replacing eleven working cards with a retry button.
+   */
+  async function useProject(project: ProjectId | null): Promise<void> {
+    projectId.value = project;
+    attaching.value = 'idle';
+    if (project === null) return;
+    try {
+      const found = (await useStudioApi().listProjects()).projects.find((p) => p.id === project);
+      if (found?.styleBibleId == null) return;
+      bible.value = await useStudioApi().getStyleBible(found.styleBibleId);
+      // The bible came from the project, not from a card, so no card is selected. Leaving
+      // a stale selection standing would put the highlight on a style the project is not
+      // using.
+      selectedId.value = null;
+      attaching.value = 'done';
+    } catch (caught) {
+      actionError.value = asApiError(
+        caught,
+        'project-style-load-failed',
+        "this project's style could not be loaded",
       );
     }
   }
@@ -193,6 +254,20 @@ export const useStyleLabStore = defineStore('style-lab', (): StyleLabStore => {
     }
   }
 
+  /**
+   * Locks the bible, then attaches it to the project.
+   *
+   * Two steps, and the order matters: a project pointing at an unlocked bible is a
+   * project every downstream stage refuses, since `assertUsableForGeneration` guards
+   * every generation. Locking first means the attachment, if it happens, is always to
+   * something usable.
+   *
+   * They are also reported separately. A lock that succeeded and an attach that failed
+   * is a real state - the bible is frozen, the project just does not know about it yet -
+   * and collapsing the two would either claim a success that did not happen or hide one
+   * that did. The retry is the same button, and re-attaching a locked bible is
+   * idempotent, so pressing it again finishes the job rather than starting a new one.
+   */
   async function lock(): Promise<void> {
     const current = bible.value;
     if (current === null) return;
@@ -204,6 +279,32 @@ export const useStyleLabStore = defineStore('style-lab', (): StyleLabStore => {
     } catch (caught) {
       locking.value = 'idle';
       actionError.value = asApiError(caught, 'style-lock-failed', 'the style could not be locked');
+      return;
+    }
+    await attach();
+  }
+
+  /**
+   * Points the project at the locked bible.
+   *
+   * Separate from `lock` so the screen can offer it on its own after a partial failure,
+   * and so a project that adopts an already-locked style does not have to re-lock it.
+   */
+  async function attach(): Promise<void> {
+    const project = projectId.value;
+    const current = bible.value;
+    if (project === null || current === null || current.lockedAt === null) return;
+    attaching.value = 'busy';
+    try {
+      await useStudioApi().updateProject(project, { styleBibleId: current.id });
+      attaching.value = 'done';
+    } catch (caught) {
+      attaching.value = 'idle';
+      actionError.value = asApiError(
+        caught,
+        'style-attach-failed',
+        'the style was locked, but the project could not be pointed at it',
+      );
     }
   }
 
@@ -223,8 +324,12 @@ export const useStyleLabStore = defineStore('style-lab', (): StyleLabStore => {
     isEmpty,
     isLocked,
     estimate,
+    projectId,
+    attaching,
     load,
+    useProject,
     select,
+    attach,
     setLane,
     probe,
     lock,

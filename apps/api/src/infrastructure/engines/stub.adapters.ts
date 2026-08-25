@@ -67,6 +67,9 @@ export class StubStyleEngine implements StyleEnginePort {
   fromPreset(_preset: Slug): Promise<Result<StyleBible>> {
     return notImplementedAsync('style from preset', STYLE_ENGINE);
   }
+  find(_id: StyleBibleId): Promise<Result<StyleBible>> {
+    return notImplementedAsync('style bible lookup', STYLE_ENGINE);
+  }
   derive(_request: DeriveStyleRequest): Promise<Result<StyleBible>> {
     return notImplementedAsync('style derivation from references', STYLE_ENGINE);
   }

@@ -59,6 +59,7 @@ export class FixtureTransport implements StudioTransport {
    * accepted the POST and then answered the same two rows would let that break silently.
    */
   readonly #created: unknown[] = [];
+  readonly #patched = new Map<string, { readonly id: string }>();
   /**
    * Style bibles materialised from a preset, keyed by id.
    *
@@ -69,6 +70,31 @@ export class FixtureTransport implements StudioTransport {
    * walking `unknown` by hand.
    */
   readonly #bibles = new Map<string, StyleBible>();
+
+  /**
+   * The bible the first project fixture already points at.
+   *
+   * Seeded because the fixture has to be self-consistent: `PROJECT_FIXTURES[0]` claims
+   * `styleLocked: true` and names an id, and a store that had never heard of that id
+   * would answer 404 to the one screen whose job is to show it. That is a fixture bug
+   * dressed as a product bug, and the studio would have looked broken for it.
+   */
+  #seedLockedBible(): void {
+    const preset = STYLE_PRESET_FIXTURES[1] ?? STYLE_PRESET_FIXTURES[0];
+    if (preset === undefined) return;
+    const id = 'sty_01JQZK4A1B2C3D4E5F6G7H8J9K';
+    this.#bibles.set(
+      id,
+      StyleBible.parse({
+        ...preset.draft,
+        id,
+        version: 1,
+        checksum: FIXTURE_CHECKSUM,
+        lockedAt: FIXTURE_INSTANT,
+        createdAt: FIXTURE_INSTANT,
+      }),
+    );
+  }
   /**
    * The asset library and the animation index, in a table of their own.
    *
@@ -86,6 +112,7 @@ export class FixtureTransport implements StudioTransport {
       project: new Map(Object.entries(SETTING_LAYER_VALUES.project)),
       run: new Map(Object.entries(SETTING_LAYER_VALUES.run)),
     };
+    this.#seedLockedBible();
   }
 
   eventSourceUrl(): null {
@@ -100,16 +127,28 @@ export class FixtureTransport implements StudioTransport {
     const [path = '', query = ''] = request.path.split('?');
 
     if (request.method === 'GET' && path === '/projects') {
-      return this.#respond(request, { projects: [...PROJECT_FIXTURES, ...this.#created] });
+      const all = [...PROJECT_FIXTURES, ...this.#created] as { readonly id: string }[];
+      return this.#respond(request, {
+        projects: all.map((project) => this.#patched.get(project.id) ?? project),
+      });
     }
     if (request.method === 'POST' && path === '/projects') {
       return this.#respond(request, this.#createProject(request.body));
+    }
+    if (request.method === 'PATCH' && /^\/projects\/[^/]+$/.test(path)) {
+      return this.#respond(
+        request,
+        this.#patchProject(path.slice('/projects/'.length), request.body),
+      );
     }
     if (request.method === 'GET' && path === '/style/presets') {
       return this.#respond(request, { presets: STYLE_PRESET_FIXTURES });
     }
     if (request.method === 'POST' && path === '/style/from-preset') {
       return this.#respond(request, this.#fromPreset(request.body));
+    }
+    if (request.method === 'GET' && /^\/style\/[^/]+$/.test(path)) {
+      return this.#respond(request, this.#findBible(path.slice('/style/'.length)));
     }
     if (request.method === 'POST' && /^\/style\/[^/]+\/probe$/.test(path)) {
       return this.#respond(request, this.#probe(path.split('/')[2] ?? '', request.body));
@@ -301,6 +340,65 @@ export class FixtureTransport implements StudioTransport {
       costIsComplete: true,
       generatedAt: FIXTURE_INSTANT,
     };
+  }
+
+  /**
+   * A project patched in place, so a lock is visible on the next read.
+   *
+   * The fixture keeps its own copy rather than mutating `PROJECT_FIXTURES`, which is a
+   * module-level constant shared by every test in the run - patching it would make one
+   * test's lock visible to the next one in file order.
+   */
+  #patchProject(id: string, body: unknown): unknown {
+    const all = [...PROJECT_FIXTURES, ...this.#created] as { readonly id: string }[];
+    const found = this.#patched.get(id) ?? all.find((project) => project.id === id);
+    if (found === undefined) {
+      throw new ApiError({
+        failure: 'api',
+        code: 'NOT_FOUND',
+        kind: 'not-found',
+        status: 404,
+        message: 'no such project',
+      });
+    }
+    const patch = body as Record<string, unknown>;
+    const summary = { ...found, ...patch } as Record<string, unknown>;
+    // `styleLocked` is derived on the server from the bible's own `lockedAt`, so it does
+    // not arrive in the patch. A list that showed "not chosen" straight after a
+    // successful lock would be the exact lie this whole change removes.
+    const styleId = summary.styleBibleId;
+    if (typeof styleId === 'string') {
+      summary.styleLocked = this.#bibles.get(styleId)?.lockedAt != null;
+    }
+    this.#patched.set(id, summary as { readonly id: string });
+
+    // The route answers with the aggregate, not the list row - the two differ by more
+    // than a field, and a fixture that returned the row would let a client that cannot
+    // parse the real response pass its tests.
+    return {
+      id: summary.id,
+      name: summary.name,
+      description: summary.logline ?? 'A fixture project.',
+      locale: summary.locale,
+      styleBibleId: summary.styleBibleId ?? null,
+      budgetNanoUsd: null,
+      createdAt: FIXTURE_INSTANT,
+      updatedAt: FIXTURE_INSTANT,
+    };
+  }
+
+  #findBible(id: string): unknown {
+    const bible = this.#bibles.get(id);
+    if (bible === undefined) {
+      throw new ApiError({
+        failure: 'api',
+        code: 'NOT_FOUND',
+        kind: 'not-found',
+        status: 404,
+        message: 'no such style bible',
+      });
+    }
+    return bible;
   }
 
   #lock(id: string): unknown {

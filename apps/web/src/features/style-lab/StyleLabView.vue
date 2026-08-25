@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { PhCaretLeft, PhCaretRight, PhFilmStrip, PhPlay } from '@phosphor-icons/vue';
-import type { Slug } from '@rv/contracts';
+import type { ProjectId, Slug } from '@rv/contracts';
 import { usePreferredReducedMotion } from '@vueuse/core';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRoute } from 'vue-router';
 
 import AppBadge from '../../components/AppBadge.vue';
 import AppSkeleton from '../../components/AppSkeleton.vue';
@@ -12,6 +13,7 @@ import ErrorNotice from '../../components/ErrorNotice.vue';
 import StyleLabMotif from '../../components/motifs/StyleLabMotif.vue';
 import { formatNumber } from '../../i18n/format';
 import { useLocaleStore } from '../../stores/locale.store';
+import { useProjectsStore } from '../../stores/projects.store';
 import { useStyleLabStore } from '../../stores/style-lab.store';
 
 import LockPanel from './LockPanel.vue';
@@ -32,6 +34,32 @@ import ProbePanel from './ProbePanel.vue';
 const { t } = useI18n();
 const lab = useStyleLabStore();
 const localeStore = useLocaleStore();
+const projects = useProjectsStore();
+const route = useRoute();
+
+/**
+ * Which project this lock belongs to.
+ *
+ * `?project=` when given, the first project otherwise - the same rule the Story and
+ * Characters screens follow, so the three agree about what "the current project" means
+ * without a second picker to disagree with the one on the Projects screen.
+ *
+ * The Projects screen has linked here with `?project=` since it was written. This screen
+ * ignored it, and the consequence was not cosmetic: a locked bible attached to nothing,
+ * so a project stayed at "no style chosen" however many times someone locked one.
+ */
+const projectId = computed<ProjectId | null>(() => {
+  const asked = route.query.project;
+  if (typeof asked === 'string') {
+    const match = projects.projects.find((project) => project.id === asked);
+    if (match !== undefined) return match.id;
+  }
+  return projects.projects.at(0)?.id ?? null;
+});
+
+const project = computed(
+  () => projects.projects.find((entry) => entry.id === projectId.value) ?? null,
+);
 
 /**
  * Reduced motion decides the default, not the availability.
@@ -61,8 +89,15 @@ function choose(id: Slug): void {
 }
 
 onMounted(() => {
+  // Not awaited, and not in this order by accident: the shelf is eleven cards that depend
+  // on nothing else on this screen, so it starts immediately and the project list resolves
+  // beside it. `projectId` becomes non-null when that lands, and the watcher below picks
+  // it up - which is also the path a person takes when they switch project.
   void lab.load();
+  if (projects.status === 'idle') void projects.load();
 });
+
+watch(projectId, (id) => void lab.useProject(id), { immediate: true });
 </script>
 
 <template>

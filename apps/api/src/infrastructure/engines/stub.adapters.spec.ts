@@ -42,6 +42,7 @@ const CASES: readonly {
       owner: '@rv/style-engine',
       call: () => style.fromPreset(anything),
     },
+    { label: 'style.find', owner: '@rv/style-engine', call: () => style.find(anything) },
     { label: 'style.derive', owner: '@rv/style-engine', call: () => style.derive(anything) },
     { label: 'style.probe', owner: '@rv/style-engine', call: () => style.probe(anything) },
     { label: 'style.lock', owner: '@rv/style-engine', call: () => style.lock(anything) },

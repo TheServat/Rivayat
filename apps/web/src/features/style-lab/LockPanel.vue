@@ -8,6 +8,7 @@ import AppButton from '../../components/AppButton.vue';
 import { formatInstant } from '../../i18n/format';
 import { localised } from '../../i18n/localised';
 import { useLocaleStore } from '../../stores/locale.store';
+import { useProjectsStore } from '../../stores/projects.store';
 import { useStyleLabStore } from '../../stores/style-lab.store';
 
 /**
@@ -25,6 +26,28 @@ import { useStyleLabStore } from '../../stores/style-lab.store';
 const { t } = useI18n();
 const lab = useStyleLabStore();
 const localeStore = useLocaleStore();
+const projects = useProjectsStore();
+
+/**
+ * The project this lock will be recorded on.
+ *
+ * Named on the button rather than left implicit. Locking is the one irreversible action
+ * here and it now writes to a project - so "which one" stopped being a detail the moment
+ * the studio held more than one.
+ */
+const projectName = computed(
+  () => projects.projects.find((entry) => entry.id === lab.projectId)?.name ?? null,
+);
+
+/**
+ * A style that is frozen but that the project does not point at yet.
+ *
+ * A real state rather than a defensive one: locking is two calls, and the second can fail
+ * on its own. Saying "locked" and stopping would leave a project that reads "no style
+ * chosen" beside a panel that reads "locked", with nothing on screen explaining the
+ * disagreement or offering to fix it.
+ */
+const detached = computed(() => lab.isLocked && lab.projectId !== null && lab.attaching !== 'done');
 
 const CONFIRM_ID = 'rv-style-lock-confirm';
 const TRIGGER_ID = 'rv-style-lock-trigger';
@@ -101,6 +124,22 @@ async function confirm(): Promise<void> {
           })
         }}
       </span>
+      <span v-if="projectName !== null" class="sl-lock__when">
+        {{ t('styleLab.lock.forProject', { project: projectName }) }}
+      </span>
+
+      <!--
+        Locked, but the project does not point at it. Offered as an action rather than
+        reported as an error: the fix is one idempotent call and the person is already
+        here. Inside this branch because `detached` cannot be true unless the style is
+        locked - and a sibling `v-if` between a `v-if` and its `v-else` detaches them.
+      -->
+      <template v-if="detached">
+        <span class="sl-lock__when">{{ t('styleLab.lock.detached') }}</span>
+        <AppButton variant="primary" :disabled="lab.attaching === 'busy'" @click="lab.attach()">
+          {{ lab.attaching === 'busy' ? t('styleLab.lock.attaching') : t('styleLab.lock.attach') }}
+        </AppButton>
+      </template>
     </div>
 
     <template v-else>
@@ -116,6 +155,10 @@ async function confirm(): Promise<void> {
           <PhLockSimple :size="15" weight="fill" aria-hidden="true" />
           {{ lab.locking === 'busy' ? t('styleLab.lock.locking') : t('styleLab.lock.action') }}
         </AppButton>
+        <p v-if="projectName !== null" class="sl-lock__hint">
+          {{ t('styleLab.lock.forProject', { project: projectName }) }}
+        </p>
+        <p v-else class="sl-lock__hint">{{ t('styleLab.lock.noProject') }}</p>
         <p v-if="lab.bible === null" class="sl-lock__hint">{{ t('styleLab.lock.needsStyle') }}</p>
       </div>
 

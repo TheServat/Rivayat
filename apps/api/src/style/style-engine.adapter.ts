@@ -334,6 +334,16 @@ export class StyleEngineAdapter implements StyleEnginePort {
     return ok(locked.value);
   }
 
+  /**
+   * One bible by id.
+   *
+   * `#load` already existed and did exactly this - three of the routes here start with
+   * it - so the read was present the whole time and simply had no door on it.
+   */
+  find(id: StyleBibleId): Promise<Result<StyleBible, AppError>> {
+    return this.#load(id);
+  }
+
   async #load(id: StyleBibleId): Promise<Result<StyleBible, AppError>> {
     const found = await this.#deps.repository.find(id);
     if (isErr(found)) return found;

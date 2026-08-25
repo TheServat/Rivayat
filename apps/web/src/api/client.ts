@@ -2,10 +2,12 @@ import {
   AssetDemandPlan,
   Project,
   StyleBible,
+  UpdateProjectRequest,
   type AnimationId,
   type AssetId,
   type AssetVersionId,
   type RegenerateIntent,
+  type ProjectId,
   type RunId,
   type Slug,
   type StyleBibleId,
@@ -76,6 +78,31 @@ export class StudioApi {
     });
   }
 
+  /**
+   * Changes a project, one field at a time or several at once.
+   *
+   * Every key is optional and an absent key is left alone, which is the difference
+   * between a patch and a replacement - a caller that only knows the style should not
+   * have to send back a name it never read.
+   *
+   * The first caller is the Style Lab attaching a bible it just locked. Locking used to
+   * produce a bible attached to nothing, so a project stayed at "no style chosen" no
+   * matter how many times someone locked one.
+   */
+  updateProject(
+    id: ProjectId,
+    patch: UpdateProjectRequest,
+    signal?: AbortSignal,
+  ): Promise<Project> {
+    return this.transport.send({
+      method: 'PATCH',
+      path: `/projects/${id}`,
+      schema: Project,
+      body: UpdateProjectRequest.parse(patch),
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
   // ── S1 style ────────────────────────────────────────────────────────
 
   /**
@@ -124,6 +151,22 @@ export class StudioApi {
       path: `/style/${id}/probe`,
       schema: StyleProbeSheet,
       body: { lane },
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /**
+   * One bible by id.
+   *
+   * What the Style Lab needs to show a project the style it locked last week. Every
+   * other style call on this client *produces* a bible, which is why a returning project
+   * used to open on an empty gallery.
+   */
+  getStyleBible(id: StyleBibleId, signal?: AbortSignal): Promise<StyleBible> {
+    return this.transport.send({
+      method: 'GET',
+      path: `/style/${id}`,
+      schema: StyleBible,
       ...(signal === undefined ? {} : { signal }),
     });
   }

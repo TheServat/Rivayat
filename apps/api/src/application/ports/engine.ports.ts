@@ -69,6 +69,18 @@ export interface StyleEnginePort {
    */
   listPresets(): Promise<Result<StylePresetList>>;
   fromPreset(preset: Slug): Promise<Result<StyleBible>>;
+  /**
+   * One bible, by id.
+   *
+   * The read that was missing. Every other route here *produces* a bible, so a project
+   * that had locked one last week could not get it back - the Style Lab opened on an
+   * empty gallery and locking again minted a second bible beside the first.
+   *
+   * `NotFoundError` rather than `null` for an id that resolves to nothing: a caller
+   * holding a style id got it from somewhere, so its absence is a broken reference and
+   * not an ordinary empty result.
+   */
+  find(id: StyleBibleId): Promise<Result<StyleBible>>;
   derive(request: DeriveStyleRequest): Promise<Result<StyleBible>>;
   /**
    * Four tiles, generated **before** the lock rather than after it.
