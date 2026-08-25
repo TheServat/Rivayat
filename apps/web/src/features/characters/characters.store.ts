@@ -6,7 +6,9 @@ import type {
   ProjectId,
   Relation,
   RelationGroup,
+  RunId,
   SeriesCard,
+  StyleBibleId,
   SeriesId,
 } from '@rv/contracts';
 import { relationGroupOf } from '@rv/contracts';
@@ -134,6 +136,12 @@ export interface CharactersStore {
   focusOn: (entityId: EntityId) => void;
   chooseWardrobe: (slug: string) => void;
   openCell: (variantKey: string | null) => void;
+  /** The run building the cast, while it runs. `null` when nothing is in flight. */
+  readonly castRunId: Ref<RunId | null>;
+  /** Ask the pipeline to write the cast. The seed is stated so the run can be replayed. */
+  buildCast: (seed: number) => Promise<boolean>;
+  /** Poll it. `true` once the run has reached a terminal state, whatever that state was. */
+  awaitCast: () => Promise<boolean>;
   saveCellPrompt: (variantKey: string, prompt: string) => Promise<boolean>;
   generateCell: (variantKey: string) => Promise<boolean>;
 }
@@ -168,6 +176,10 @@ export const useCharactersStore = defineStore('characters', (): CharactersStore 
   const missingRoute = ref<string | null>(null);
   const seriesList = shallowRef<readonly SeriesCard[]>([]);
   const seriesId = ref<SeriesId | null>(null);
+  const projectId = ref<ProjectId | null>(null);
+  const styleBibleId = ref<StyleBibleId | null>(null);
+  /** The run building the cast, while it runs. `null` when nothing is in flight. */
+  const castRunId = ref<RunId | null>(null);
   const snapshot = shallowRef<NarrativeSnapshot | null>(null);
   const query = ref('');
   const selectedId = ref<EntityId | null>(null);
@@ -377,11 +389,18 @@ export const useCharactersStore = defineStore('characters', (): CharactersStore 
 
   // ── loading ───────────────────────────────────────────────────────────────
 
-  async function load(projectId: ProjectId): Promise<void> {
+  async function load(project: ProjectId): Promise<void> {
+    projectId.value = project;
     status.value = 'loading';
     error.value = null;
     try {
-      const list = await gateway().listSeries(projectId);
+      const [list, projects] = await Promise.all([
+        gateway().listSeries(project),
+        // The bible id travels on the project summary the picker already fetches, so
+        // this is the same round trip the shell makes rather than a new endpoint.
+        useStudioApi().listProjects(),
+      ]);
+      styleBibleId.value = projects.projects.find((p) => p.id === project)?.styleBibleId ?? null;
       seriesList.value = list;
       const first = list.at(0);
       if (first === undefined) {
@@ -501,6 +520,88 @@ export const useCharactersStore = defineStore('characters', (): CharactersStore 
     };
   }
 
+  /**
+   * Ask the pipeline to write the cast.
+   *
+   * The studio could read what the `cast` stage produced and had no way to ask for it, so
+   * a character with no state grid was a dead end - the screen said "no states defined"
+   * and nothing in the interface could define any.
+   *
+   * The seed is stated rather than defaulted. A run that cannot name its seed cannot be
+   * replayed, and this one calls a model per character, so "the same cast again" has to
+   * mean something.
+   */
+  async function buildCast(seed: number): Promise<boolean> {
+    const series = seriesId.value;
+    const project = projectId.value;
+    if (series === null || project === null) return false;
+    statesError.value = null;
+    try {
+      const run = await useStudioApi().startRun({
+        projectId: project,
+        seriesId: series,
+        // `style` comes with it, and not as a precaution. S3 derives every appearance
+        // from the locked style bible and refuses without one - its own error says "S1
+        // must run first". Asking for `cast` alone produced a run that failed in three
+        // milliseconds, which is the pipeline being right and the caller being wrong.
+        stages: ['style', 'cast'],
+        seed,
+        budgetNanoUsd: null,
+        payload: {
+          // S1 needs the bible named. The project already has a locked one, so this is a
+          // *use*, not a re-authoring: `probe: false` because a style already approved
+          // should not redraw its four tiles, and `lock: false` because it is locked.
+          style: { styleBibleId: styleBibleId.value, probe: false, lock: false },
+          cast: {},
+        },
+      });
+      castRunId.value = run.id;
+      return true;
+    } catch (caught) {
+      statesError.value = asApiError(caught, 'cast-start-failed', 'the cast run could not start');
+      // The panel renders `statesError` only when the status says error. Setting one
+      // without the other writes a message nobody ever sees - which is how a run that
+      // failed in three milliseconds left a button reading "building…" for eight minutes.
+      statesStatus.value = 'error';
+      return false;
+    }
+  }
+
+  /**
+   * Poll the cast run and reload once it finishes.
+   *
+   * Polling rather than the event stream because this is a single stage with one question
+   * - is it done - and a stream would mean holding a socket open across a screen the user
+   * is free to leave. The run survives them leaving; the socket would not.
+   */
+  async function awaitCast(): Promise<boolean> {
+    const runId = castRunId.value;
+    const series = seriesId.value;
+    if (runId === null || series === null) return false;
+    try {
+      const run = await useStudioApi().getRun(runId);
+      if (run.status === 'running' || run.status === 'queued') return false;
+      castRunId.value = null;
+      if (run.status !== 'succeeded') {
+        statesError.value = asApiError(
+          new Error(run.errorCode ?? 'the cast run did not succeed'),
+          'cast-failed',
+          run.errorCode ?? 'the cast run did not succeed',
+        );
+        statesStatus.value = 'error';
+        return true;
+      }
+      const project = projectId.value;
+      if (project !== null) await load(project);
+      return true;
+    } catch (caught) {
+      castRunId.value = null;
+      statesError.value = asApiError(caught, 'cast-poll-failed', 'the cast run could not be read');
+      statesStatus.value = 'error';
+      return true;
+    }
+  }
+
   async function saveCellPrompt(variantKey: string, prompt: string): Promise<boolean> {
     const series = seriesId.value;
     const entity = selectedId.value;
@@ -586,6 +687,9 @@ export const useCharactersStore = defineStore('characters', (): CharactersStore 
     focusOn,
     chooseWardrobe,
     openCell,
+    castRunId,
+    buildCast,
+    awaitCast,
     saveCellPrompt,
     generateCell,
   };

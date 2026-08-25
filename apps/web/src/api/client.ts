@@ -13,6 +13,7 @@ import {
 
 import { FixtureTransport } from './fixtures/fixture-transport';
 import { ApiError } from './errors';
+import { RunSummary, StartRunBody } from './schemas/runs';
 import { AnimationIndex, type AnimationIR } from './schemas/animations';
 import { CompositionList, StoredComposition } from './schemas/compositions';
 import {
@@ -372,6 +373,38 @@ export class StudioApi {
       ...(signal === undefined ? {} : { signal }),
     });
     return stored.ir;
+  }
+
+  /**
+   * Start a pipeline run.
+   *
+   * The one thing the studio could not do. Every screen could read what a stage produced
+   * and none could ask for a stage to happen, so a project's cast existed only if a
+   * seeder had written it - and the Characters screen's honest "no states defined yet"
+   * had no answer anywhere in the interface.
+   *
+   * Returns as soon as the run is queued. Progress arrives on the event stream, because a
+   * stage that calls a local model takes minutes and a request that waits for it is a
+   * request that times out.
+   */
+  startRun(body: StartRunBody, signal?: AbortSignal): Promise<RunSummary> {
+    return this.transport.send({
+      method: 'POST',
+      path: '/runs',
+      body: StartRunBody.parse(body),
+      schema: RunSummary,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /** One run, for polling a stage to completion when the stream is not wanted. */
+  getRun(runId: RunId, signal?: AbortSignal): Promise<RunSummary> {
+    return this.transport.send({
+      method: 'GET',
+      path: `/runs/${runId}`,
+      schema: RunSummary,
+      ...(signal === undefined ? {} : { signal }),
+    });
   }
 
   runStreamUrl(runId: RunId): string | null {

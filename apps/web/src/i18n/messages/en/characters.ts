@@ -141,6 +141,10 @@ export default {
   },
 
   states: {
+    build: 'Build the cast',
+    building: 'Building the cast…',
+    buildHint:
+      'This runs the cast stage on a local model: a sheet and a state set per character. Minutes, and it costs nothing.',
     heading: 'State grid',
     hint: 'Each cell is an image with a prompt behind it. Open a cell to read or edit the prompt.',
     expressions: 'Expressions',

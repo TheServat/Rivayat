@@ -127,6 +127,26 @@ async function save(cell: CharacterStateCell): Promise<void> {
   await characters.saveCellPrompt(cell.variantKey, draft.value.trim());
 }
 
+/**
+ * Ask for the cast, then watch for it.
+ *
+ * The seed is fixed rather than random because `Math.random` is banned in this codebase
+ * for exactly the reason it would be wrong here: a run nobody can repeat is a run nobody
+ * can debug. A person who wants a different cast changes the seed, which is a decision
+ * they can see rather than one the machine made for them.
+ */
+const CAST_SEED = 7;
+
+async function build(): Promise<void> {
+  if (!(await characters.buildCast(CAST_SEED))) return;
+  // The stage calls a model per character, so this is minutes rather than seconds.
+  const timer = window.setInterval(() => {
+    void characters.awaitCast().then((finished) => {
+      if (finished) window.clearInterval(timer);
+    });
+  }, 4000);
+}
+
 async function generate(cell: CharacterStateCell): Promise<void> {
   const ok = await characters.generateCell(cell.variantKey);
   if (ok) confirming.value = null;
@@ -163,7 +183,25 @@ async function generate(cell: CharacterStateCell): Promise<void> {
       </ul>
     </template>
 
-    <p v-else-if="total === 0" class="rv-grid__empty">{{ t('characters.states.empty') }}</p>
+    <div v-else-if="total === 0" class="rv-grid__empty">
+      <p>{{ t('characters.states.empty') }}</p>
+      <!-- An empty state is an invitation, not a report. This is the only control in the
+           studio that can ask the pipeline for anything, and it belongs here because here
+           is where a person finds out they need it. -->
+      <p class="rv-grid__hint">{{ t('characters.states.buildHint') }}</p>
+      <AppButton
+        variant="primary"
+        size="sm"
+        :disabled="characters.castRunId !== null"
+        @click="build"
+      >
+        {{
+          characters.castRunId === null
+            ? t('characters.states.build')
+            : t('characters.states.building')
+        }}
+      </AppButton>
+    </div>
 
     <template v-else>
       <!-- ── which outfit ────────────────────────────────────────────────── -->
