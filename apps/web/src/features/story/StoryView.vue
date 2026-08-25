@@ -12,6 +12,7 @@ import ErrorNotice from '../../components/ErrorNotice.vue';
 import RegistrationMark from '../../components/RegistrationMark.vue';
 import StoryMotif from '../../components/motifs/StoryMotif.vue';
 
+import IntakeNotice from './components/IntakeNotice.vue';
 import StartSeriesPanel from './components/StartSeriesPanel.vue';
 import { formatNanoUsd, formatNumber } from '../../i18n/format';
 import { useLocaleStore } from '../../stores/locale.store';
@@ -174,8 +175,14 @@ function onSeriesChange(event: Event): void {
       {{ t('story.context.noProject') }}
     </p>
 
+    <!--
+      Whether S0 has run, above both the empty state and the tree. It is a precondition
+      for the Characters screen, and it was invisible on every screen including this one.
+    -->
+    <IntakeNotice v-else-if="story.seriesId !== null" class="rv-story__intake" />
+
     <!-- ── empty: an invitation, and one action ────────────────────────────── -->
-    <EmptyState v-else-if="story.isEmpty">
+    <EmptyState v-if="story.seriesList.length > 0 && story.isEmpty">
       <template #art>
         <StoryMotif />
       </template>
@@ -192,7 +199,7 @@ function onSeriesChange(event: Event): void {
     </EmptyState>
 
     <!-- ── the tree ────────────────────────────────────────────────────────── -->
-    <div v-else class="rv-story__layout">
+    <div v-else-if="story.seriesList.length > 0" class="rv-story__layout">
       <div class="rv-story__main">
         <!--
           A failure part-way down the tree is not an empty screen. The notice sits above

@@ -135,6 +135,33 @@ export class StoryController {
    * the other spends money per level - and folding them together would make re-running
    * intake after an edited premise cost a whole tree.
    */
+  /**
+   * What S0 left behind, or an empty shortlist if it never ran.
+   *
+   * A 200 with `castCandidates: []` rather than a 404, for the same reason the empty
+   * outline is a 200: "S0 has not run for this series" is a state the screen renders and
+   * offers to fix, and a not-found there is indistinguishable from a route that does not
+   * exist. Without this the studio could run intake and never find out whether it had.
+   */
+  @Get('series/:seriesId/intake')
+  async intakeReport(
+    @Param('seriesId', new ZodValidationPipe(SeriesId)) seriesId: SeriesId,
+  ): Promise<Result<IntakeReport>> {
+    const found = await this.#series.findById(seriesId);
+    if (isErr(found)) return found;
+    if (found.value === null) return err(new NotFoundError('series', seriesId));
+
+    const document = await this.#store.load(seriesId);
+    if (isErr(document)) return document;
+
+    return ok({
+      seriesId,
+      workingTitle: found.value.title,
+      premise: found.value.premise,
+      castCandidates: [...document.value.castCandidates],
+    });
+  }
+
   @Post('series/:seriesId/intake')
   async intake(
     @Param('seriesId', new ZodValidationPipe(SeriesId)) seriesId: SeriesId,

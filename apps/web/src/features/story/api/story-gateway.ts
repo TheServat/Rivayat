@@ -97,6 +97,8 @@ export interface StoryGateway {
    * whole series and never produce it.
    */
   runIntake: (seriesId: SeriesId, brief: StoryBrief, signal?: AbortSignal) => Promise<IntakeReport>;
+  /** What S0 left behind, with an empty shortlist meaning it has not run. */
+  loadIntake: (seriesId: SeriesId, signal?: AbortSignal) => Promise<IntakeReport>;
   /**
    * Grows the tree by exactly one level.
    *
@@ -140,6 +142,15 @@ export class HttpStoryGateway implements StoryGateway {
       path: `/projects/${projectId}/series`,
       schema: SeriesCard,
       body: draft,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  loadIntake(seriesId: SeriesId, signal?: AbortSignal): Promise<IntakeReport> {
+    return this.#transport.send({
+      method: 'GET',
+      path: `/series/${seriesId}/intake`,
+      schema: IntakeReport,
       ...(signal === undefined ? {} : { signal }),
     });
   }

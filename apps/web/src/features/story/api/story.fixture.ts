@@ -370,6 +370,7 @@ export function createStoryFixtureGateway(): {
     draft: { readonly title: string; readonly premise: string },
   ) => Promise<SeriesCard>;
   runIntake: (seriesId: SeriesId, brief: StoryBrief) => Promise<IntakeReport>;
+  loadIntake: (seriesId: SeriesId) => Promise<IntakeReport>;
   loadTree: (seriesId: SeriesId) => Promise<StoryTree>;
   expandLevel: (seriesId: SeriesId, level: OutlineLevel) => Promise<StoryExpansion>;
   editNode: (nodeId: string, edit: StoryNodeEdit) => Promise<StoryNode>;
@@ -377,6 +378,7 @@ export function createStoryFixtureGateway(): {
 } {
   let nodes: StoryNode[] = [];
   const started: SeriesCard[] = [];
+  let shortlist: IntakeReport['castCandidates'] = [];
 
   const tree = (): StoryTree => ({ seriesId: SERIES_ID, nodes: [...nodes] });
 
@@ -418,26 +420,38 @@ export function createStoryFixtureGateway(): {
      * its tests while showing a cast that has nothing to do with what was typed. Two
      * candidates minimum, so the "did intake produce anything" branch is exercised.
      */
+    loadIntake: (seriesId) =>
+      settle(
+        IntakeReport.parse({
+          seriesId,
+          workingTitle: 'Untitled',
+          premise: 'Not yet taken in.',
+          // Empty until `runIntake` has been called on this transport, which is the state
+          // the screen has to be able to tell apart from "S0 ran and found nobody".
+          castCandidates: shortlist,
+        }),
+      ),
+
     runIntake: (seriesId, brief) => {
       const source = 'idea' in brief ? brief.idea : (brief.workingTitle ?? '');
       const names = [...new Set(source.match(/[A-Z][a-z]{2,}/g) ?? [])].slice(0, 4);
       const roles = ['protagonist', 'antagonist', 'ally', 'mentor'] as const;
-      return settle(
-        IntakeReport.parse({
-          seriesId,
-          workingTitle: brief.workingTitle ?? 'Untitled',
-          premise: source,
-          castCandidates: (names.length >= 2 ? names : ['The Keeper', 'The Stranger']).map(
-            (name, index) => ({
-              name,
-              role: roles[index % roles.length],
-              importance: index === 0 ? 'lead' : 'supporting',
-              premiseRole: `What ${name} does to the story.`,
-              distinguishingTrait: `The one thing that makes ${name} not interchangeable.`,
-            }),
-          ),
-        }),
-      );
+      const report = IntakeReport.parse({
+        seriesId,
+        workingTitle: brief.workingTitle ?? 'Untitled',
+        premise: source,
+        castCandidates: (names.length >= 2 ? names : ['The Keeper', 'The Stranger']).map(
+          (name, index) => ({
+            name,
+            role: roles[index % roles.length],
+            importance: index === 0 ? 'lead' : 'supporting',
+            premiseRole: `What ${name} does to the story.`,
+            distinguishingTrait: `The one thing that makes ${name} not interchangeable.`,
+          }),
+        ),
+      });
+      shortlist = report.castCandidates;
+      return settle(report);
     },
 
     loadTree: () => settle(tree()),

@@ -8,6 +8,15 @@ export default {
   title: 'Story',
   subtitle: 'An idea becomes a tree of seasons, episodes, acts, sequences, scenes and beats.',
 
+  intake: {
+    heading: 'S0 has not run for this series.',
+    body: 'It produces the cast shortlist, and the Characters screen refuses to build anything without one.',
+    run: 'Run S0 intake',
+    running: 'Reading the idea…',
+    done: 'S0 found {count} characters for this series.',
+    defaultAudience: 'Adults',
+    defaultTone: 'grounded',
+  },
   start: {
     heading: 'Start the series',
     hint: 'A project holds one series, and every screen after this one needs it. Nothing else can begin until it exists.',

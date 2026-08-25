@@ -108,6 +108,18 @@ describe('the story surface', () => {
     expect((response.body as { error?: { code?: string } }).error?.code).toBe('NOT_FOUND');
   });
 
+  it('answers an empty shortlist for a series S0 never ran on, not a 404', async () => {
+    const response = await request(harness.server)
+      .get(`/api/series/${seriesId}/intake`)
+      .expect(200);
+
+    // The same rule the empty outline follows: "S0 has not run" is a state the screen
+    // renders and offers to fix. A 404 here is indistinguishable, to a client, from a
+    // route nobody wrote - and the studio would show a missing feature instead of a
+    // missing step.
+    expect(response.body).toMatchObject({ seriesId, castCandidates: [] });
+  });
+
   it('rejects a brief whose kind names no intake front door', async () => {
     await request(harness.server)
       .post(`/api/series/${seriesId}/intake`)

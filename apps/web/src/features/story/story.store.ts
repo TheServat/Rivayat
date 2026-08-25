@@ -367,6 +367,21 @@ export const useStoryStore = defineStore('story', (): StoryStore => {
     status.value = 'loading';
     error.value = null;
     missingRoute.value = null;
+    // Alongside the tree, not before it: whether S0 has run is a separate fact from
+    // whether the outline exists, and a series can have either without the other. It is
+    // deliberately not awaited into the same try - a shortlist that fails to load must
+    // not turn a working outline into an error screen.
+    void gateway()
+      .loadIntake(next)
+      .then((report) => {
+        if (seriesId.value === next) castCandidates.value = report.castCandidates;
+      })
+      .catch(() => {
+        // Left empty, which reads as "S0 has not run" - the same thing the screen offers
+        // to fix. A failed read and an empty shortlist lead to the same next action.
+        if (seriesId.value === next) castCandidates.value = [];
+      });
+
     try {
       tree.value = await gateway().loadTree(next);
       openTopLevels(3);

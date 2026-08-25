@@ -378,3 +378,72 @@ describe('starting a series', () => {
     expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe(premise);
   });
 });
+
+/**
+ * Whether S0 has run, which no screen could tell you.
+ *
+ * The shortlist is a precondition for the Characters screen and was invisible on every
+ * screen including the one that produces it. A series with thirty-four story nodes and
+ * an empty shortlist looks, on the Story screen, exactly like a series with a full one -
+ * and the Characters screen refuses in both cases without saying which it is.
+ */
+describe('whether S0 has run', () => {
+  const EMPTY_PROJECT = '/story?project=prj_01JQZM5P9R7S2T4V6W8X0Y1Z3A';
+
+  it('says S0 has not run for a series nobody took in', async () => {
+    const wrapper = await mountStudio(StoryView, { locale: 'en', path: '/story' });
+    await flush(30);
+
+    // The demo series has an outline and no shortlist, which is exactly the state that
+    // used to be indistinguishable from a finished one.
+    expect(useStoryStore().castCandidates).toHaveLength(0);
+    expect(wrapper.text()).toContain('S0 has not run');
+    expect(wrapper.text()).toContain('Characters screen refuses');
+  });
+
+  it('reports the count once it has, rather than staying silent', async () => {
+    const wrapper = await mountStudio(StoryView, { locale: 'en', path: EMPTY_PROJECT });
+    await flush(30);
+
+    const text = wrapper.findAll('input[type="text"]');
+    await text[0]?.setValue('The Cartographer’s Apprentice');
+    await text[1]?.setValue('Adults who like quiet, strange things');
+    await text[2]?.setValue('melancholy, wry');
+    await wrapper
+      .find('textarea')
+      .setValue('A mapmaker inherits a map of a place that is not there.');
+    await wrapper.vm.$nextTick();
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Start the series'))
+      ?.trigger('click');
+    await flush(20);
+    await wrapper.vm.$nextTick();
+
+    const store = useStoryStore();
+    expect(store.castCandidates.length).toBeGreaterThan(0);
+    // A met precondition takes the space of a met precondition: a line, not a panel.
+    expect(wrapper.text()).toContain('S0 found');
+    expect(wrapper.text()).not.toContain('S0 has not run');
+  });
+
+  it('re-runs S0 from the series’ own premise, without asking for the brief again', async () => {
+    const wrapper = await mountStudio(StoryView, { locale: 'en', path: '/story' });
+    await flush(30);
+
+    const store = useStoryStore();
+    expect(store.castCandidates).toHaveLength(0);
+
+    // The retry is one button, not a form. Someone fixing a missing shortlist should not
+    // have to restate an audience to get one.
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Run S0 intake'))
+      ?.trigger('click');
+    await flush(20);
+    await wrapper.vm.$nextTick();
+
+    expect(store.castCandidates.length).toBeGreaterThan(0);
+  });
+});
