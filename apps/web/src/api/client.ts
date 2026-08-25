@@ -12,7 +12,9 @@ import {
 } from '@rv/contracts';
 
 import { FixtureTransport } from './fixtures/fixture-transport';
-import { AnimationIR, AnimationIndex } from './schemas/animations';
+import { ApiError } from './errors';
+import { AnimationIndex, type AnimationIR } from './schemas/animations';
+import { CompositionList, StoredComposition } from './schemas/compositions';
 import {
   Asset,
   AssetLibraryPage,
@@ -288,13 +290,50 @@ export class StudioApi {
 
   // ── S7 animation ────────────────────────────────────────────────────
 
-  /** Every animation the timeline can open. No controller serves this yet. */
-  listAnimations(signal?: AbortSignal): Promise<AnimationIndex> {
-    return this.transport.send({
+  /**
+   * Every animation the timeline can open.
+   *
+   * The route is `/compositions`, not `/animations`. The server calls these compositions
+   * because a run references one by content hash; the studio calls them animations
+   * because that is what a person opens on a timeline. Both names are right for their own
+   * side, so the translation lives here - at the boundary - rather than one side adopting
+   * the other's vocabulary.
+   *
+   * Two identities exist here and they answer different questions. The **sha256** is the
+   * address of the bytes: an edited document hashes differently, which is exactly what
+   * makes a render reproducible. The **`animationId`** is the document's own id and
+   * survives an edit.
+   *
+   * The timeline opens a document a person then edits, so it carries `animationId` -
+   * the thing that stays the same across the edit they are about to make. `getAnimation`
+   * therefore has to find a composition *by* animation id, because the store is keyed by
+   * hash. That lookup is the cost of the two identities, and it is the right way round:
+   * the alternative is a timeline whose selection changes identity every time you touch
+   * a keyframe.
+   */
+  async listAnimations(signal?: AbortSignal): Promise<AnimationIndex> {
+    const list = await this.transport.send({
       method: 'GET',
-      path: '/animations',
-      schema: AnimationIndex,
+      path: '/compositions',
+      schema: CompositionList,
       ...(signal === undefined ? {} : { signal }),
+    });
+    return AnimationIndex.parse({
+      animations: list.compositions.map((composition) => ({
+        id: composition.animationId,
+        name: composition.label,
+        fps: composition.fps,
+        durationMs: composition.durationMs,
+        sceneSpace: composition.sceneSpace,
+        nodeCount: composition.nodeCount,
+        // The index deliberately does not fetch each IR to count these - that is its
+        // whole reason for existing - and the composition summary does not carry them.
+        // Zero here would be a claim; these are counted when a document is opened.
+        trackCount: 0,
+        behaviourCount: 0,
+        markerCount: 0,
+        updatedAt: composition.storedAt,
+      })),
     });
   }
 
@@ -305,13 +344,34 @@ export class StudioApi {
    * consumes. A document that does not satisfy the IR's refinements - a cycle in the
    * node hierarchy, a track on an unknown node - never reaches the player.
    */
-  getAnimation(animationId: AnimationId, signal?: AbortSignal): Promise<AnimationIR> {
-    return this.transport.send({
+  async getAnimation(animationId: AnimationId, signal?: AbortSignal): Promise<AnimationIR> {
+    // The store is keyed by content hash, and the timeline holds an `animationId`, so the
+    // hash is looked up from the index. One extra round trip against a list the screen
+    // already fetched to draw its picker - and the alternative, keying the timeline by
+    // hash, would change the selected document's identity on every keyframe drag.
+    const index = await this.transport.send({
       method: 'GET',
-      path: `/animations/${animationId}`,
-      schema: AnimationIR,
+      path: '/compositions',
+      schema: CompositionList,
       ...(signal === undefined ? {} : { signal }),
     });
+    const match = index.compositions.find((c) => c.animationId === animationId);
+    if (match === undefined) {
+      throw new ApiError({
+        failure: 'api',
+        code: 'NOT_FOUND',
+        kind: 'not-found',
+        status: 404,
+        message: `no composition is stored for ${animationId}`,
+      });
+    }
+    const stored = await this.transport.send({
+      method: 'GET',
+      path: `/compositions/${match.id}`,
+      schema: StoredComposition,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    return stored.ir;
   }
 
   runStreamUrl(runId: RunId): string | null {

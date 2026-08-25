@@ -60,8 +60,11 @@ describe('an empty timeline says what will live there', () => {
       kind: 'fixture',
       eventSourceUrl: () => null,
       send: <T>(request: TransportRequest<T>): Promise<T> => {
-        if (request.path === '/animations') {
-          return Promise.resolve(parseOrThrow(request.path, request.schema, { animations: [] }));
+        // The server's route and the server's shape. The client maps compositions to
+        // animations, and a stub that answered the studio's own vocabulary would skip
+        // exactly the translation most likely to be wrong.
+        if (request.path === '/compositions') {
+          return Promise.resolve(parseOrThrow(request.path, request.schema, { compositions: [] }));
         }
         return new FixtureTransport().send(request);
       },

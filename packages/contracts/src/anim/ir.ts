@@ -370,7 +370,18 @@ export const FlapBehaviour = z.object({
   ...BehaviourBase,
   kind: z.literal('flap'),
   hz: z.number().min(0.1).max(20).default(4),
-  amplitudeDeg: z.number().min(0).max(180).default(50),
+  /**
+   * Signed, because a pair of wings is one behaviour applied twice with opposite sign.
+   *
+   * The evaluator computes `sin(phase) * amplitudeDeg`, so a negative amplitude is a
+   * wing rotating the other way - which is exactly what the far wing of a bird does.
+   * Requiring a non-negative angle here made the mirrored half unrepresentable, and the
+   * only scene in the repo that actually flaps was writing -46 and never being validated
+   * against this schema.
+   *
+   * The bound is the magnitude: 180 degrees either way.
+   */
+  amplitudeDeg: z.number().min(-180).max(180).default(50),
   /** Wings do not flap symmetrically in time; the asymmetry is what sells it. */
   downstrokeBias: Unit01.default(0.35),
 });

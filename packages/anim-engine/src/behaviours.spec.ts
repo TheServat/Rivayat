@@ -302,6 +302,19 @@ describe('flap', () => {
     expect(Math.abs(rise - fall)).toBeGreaterThan(period * 0.05);
   });
 
+  it('mirrors on a negative amplitude, which is how a pair of wings is one behaviour', () => {
+    // The far wing of a bird rotates the opposite way, and the cheapest way to say that
+    // is the same behaviour with the sign flipped. `AnimationIR` used to require a
+    // non-negative angle here, which made the mirrored half unrepresentable - and the one
+    // scene in the repo that actually flaps was writing -46 and never being validated
+    // against the schema, so nothing noticed until it was posted to a store.
+    for (let ms = 0; ms < 1000; ms += 13) {
+      const near = evaluateBehaviour(behaviour('flap', { amplitudeDeg: 46 }), ctx({ timeMs: ms }));
+      const far = evaluateBehaviour(behaviour('flap', { amplitudeDeg: -46 }), ctx({ timeMs: ms }));
+      expect(far.rotation ?? 0).toBeCloseTo(-(near.rotation ?? 0), 9);
+    }
+  });
+
   it('stays within its amplitude', () => {
     for (let ms = 0; ms < 2000; ms += 7) {
       const value = evaluateBehaviour(behaviour('flap'), ctx({ timeMs: ms })).rotation ?? 0;

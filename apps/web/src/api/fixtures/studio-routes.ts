@@ -69,7 +69,7 @@ export class StudioFixtureRoutes {
     const segments = request.path.split('/').filter((segment) => segment !== '');
     const [root, ...rest] = segments;
     if (root === 'assets') return this.#assetsRoute(request, rest);
-    if (root === 'animations') return animationsRoute(request, rest);
+    if (root === 'compositions') return compositionsRoute(request, rest);
     return undefined;
   }
 
@@ -250,14 +250,72 @@ export class StudioFixtureRoutes {
   }
 }
 
-function animationsRoute(request: RouteRequest, rest: readonly string[]): RouteResult {
+/**
+ * The server calls these compositions and the studio calls them animations.
+ *
+ * The fixture serves the *server's* shape - a list of `CompositionSummary` and a
+ * `StoredComposition` - so the client's translation runs here exactly as it does live.
+ * A fixture that served the studio's own vocabulary would skip the one piece of logic
+ * most likely to be wrong, which is the mapping between them.
+ */
+function compositionsRoute(request: RouteRequest, rest: readonly string[]): RouteResult {
   const [first, second] = rest;
-  if (request.method === 'GET' && first === undefined) return { payload: ANIMATION_INDEX };
-  if (request.method === 'GET' && first !== undefined && second === undefined) {
-    const ir = animationById(first);
-    return ir === undefined ? notFound() : { payload: ir };
+
+  if (request.method === 'GET' && first === undefined) {
+    return {
+      payload: {
+        compositions: ANIMATION_INDEX.animations.map((a) => ({
+          // The hash is the address; a fixture has no real bytes to hash, so it is
+          // derived from the id and is stable, which is all a fixture needs it to be.
+          id: fakeHash(a.id),
+          animationId: a.id,
+          label: a.name,
+          durationMs: a.durationMs,
+          fps: a.fps,
+          sceneSpace: a.sceneSpace,
+          nodeCount: a.nodeCount,
+          storedAt: a.updatedAt,
+        })),
+      },
+    };
   }
+
+  if (request.method === 'GET' && first !== undefined && second === undefined) {
+    const summary = ANIMATION_INDEX.animations.find((a) => fakeHash(a.id) === first);
+    const ir = summary === undefined ? undefined : animationById(summary.id);
+    if (summary === undefined || ir === undefined) return notFound();
+    return {
+      payload: {
+        summary: {
+          id: first,
+          animationId: summary.id,
+          label: summary.name,
+          durationMs: summary.durationMs,
+          fps: summary.fps,
+          sceneSpace: summary.sceneSpace,
+          nodeCount: summary.nodeCount,
+          storedAt: summary.updatedAt,
+        },
+        ir,
+      },
+    };
+  }
+
   return undefined;
+}
+
+/** A stable 64-hex string from an id. Not a real digest, and not pretending to be. */
+function fakeHash(id: string): string {
+  let a = 0x811c9dc5;
+  const out: string[] = [];
+  for (let round = 0; round < 8; round += 1) {
+    for (const ch of `${id}:${round}`) {
+      a ^= ch.codePointAt(0) ?? 0;
+      a = Math.imul(a, 0x01000193) >>> 0;
+    }
+    out.push(a.toString(16).padStart(8, '0'));
+  }
+  return out.join('').slice(0, 64);
 }
 
 /**
