@@ -15,7 +15,9 @@
  * chrome around it is bilingual, the series it is showing is not.
  */
 
-import { type SeriesCard, type SeriesId, type ProjectId } from '@rv/contracts';
+import { SeriesCard, type SeriesId, type ProjectId } from '@rv/contracts';
+
+import { IntakeReport, type StoryBrief } from './intake';
 
 import { ApiError } from '../../../api/errors';
 
@@ -363,12 +365,18 @@ function childrenFor(level: OutlineLevel, parentIndex: number): readonly Authore
  */
 export function createStoryFixtureGateway(): {
   listSeries: (projectId: ProjectId) => Promise<readonly SeriesCard[]>;
+  createSeries: (
+    projectId: ProjectId,
+    draft: { readonly title: string; readonly premise: string },
+  ) => Promise<SeriesCard>;
+  runIntake: (seriesId: SeriesId, brief: StoryBrief) => Promise<IntakeReport>;
   loadTree: (seriesId: SeriesId) => Promise<StoryTree>;
   expandLevel: (seriesId: SeriesId, level: OutlineLevel) => Promise<StoryExpansion>;
   editNode: (nodeId: string, edit: StoryNodeEdit) => Promise<StoryNode>;
   regenerateNode: (nodeId: string) => Promise<StoryExpansion>;
 } {
   let nodes: StoryNode[] = [];
+  const started: SeriesCard[] = [];
 
   const tree = (): StoryTree => ({ seriesId: SERIES_ID, nodes: [...nodes] });
 
@@ -380,7 +388,57 @@ export function createStoryFixtureGateway(): {
 
   return {
     listSeries: (projectId) =>
-      settle(FIXTURE_SERIES.filter((series) => series.projectId === projectId)),
+      settle([
+        ...FIXTURE_SERIES.filter((series) => series.projectId === projectId),
+        ...started.filter((series) => series.projectId === projectId),
+      ]),
+
+    createSeries: (projectId, draft) => {
+      const created = SeriesCard.parse({
+        id: `ser_01JQZK3M7X8YB4N2VTC6WPH${String(started.length).padStart(3, 'A')}`,
+        projectId,
+        title: draft.title,
+        premise: draft.premise,
+        hasBible: false,
+        createdAt: instantFor(started.length),
+      });
+      started.push(created);
+      // A new series has no tree. Clearing is what makes the fixture honest: a screen
+      // that opened a brand-new series onto the demo outline would prove nothing about
+      // the empty state, which is the state that actually needed a control.
+      nodes = [];
+      return settle(created);
+    },
+
+    /**
+     * S0, answered from the brief rather than from a model.
+     *
+     * The shortlist is derived from the idea's own words - the capitalised phrases in it -
+     * because a fixture that returned three invented characters would let a screen pass
+     * its tests while showing a cast that has nothing to do with what was typed. Two
+     * candidates minimum, so the "did intake produce anything" branch is exercised.
+     */
+    runIntake: (seriesId, brief) => {
+      const source = 'idea' in brief ? brief.idea : (brief.workingTitle ?? '');
+      const names = [...new Set(source.match(/[A-Z][a-z]{2,}/g) ?? [])].slice(0, 4);
+      const roles = ['protagonist', 'antagonist', 'ally', 'mentor'] as const;
+      return settle(
+        IntakeReport.parse({
+          seriesId,
+          workingTitle: brief.workingTitle ?? 'Untitled',
+          premise: source,
+          castCandidates: (names.length >= 2 ? names : ['The Keeper', 'The Stranger']).map(
+            (name, index) => ({
+              name,
+              role: roles[index % roles.length],
+              importance: index === 0 ? 'lead' : 'supporting',
+              premiseRole: `What ${name} does to the story.`,
+              distinguishingTrait: `The one thing that makes ${name} not interchangeable.`,
+            }),
+          ),
+        }),
+      );
+    },
 
     loadTree: () => settle(tree()),
 

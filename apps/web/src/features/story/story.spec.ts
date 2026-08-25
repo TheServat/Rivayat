@@ -262,3 +262,119 @@ describe('the screen', () => {
     expect(await structure('fa')).toEqual(await structure('en'));
   });
 });
+
+/**
+ * A project with no series, which is where every project starts.
+ *
+ * This branch used to render one sentence - "this project has no series yet" - and no
+ * control. Every screen after this one needs a series id, so a project the studio had
+ * not been seeded with was a dead end from the moment someone created it: the Projects
+ * screen could make projects and nothing could make them usable.
+ */
+describe('starting a series', () => {
+  /** A project the story fixture has no series for - which is every project but one. */
+  const EMPTY_PROJECT = '/story?project=prj_01JQZM5P9R7S2T4V6W8X0Y1Z3A';
+
+  /** Fills every field the S0 brief requires. Intake binds every later stage to them. */
+  async function fillBrief(wrapper: Awaited<ReturnType<typeof mountStudio>>): Promise<void> {
+    const text = wrapper.findAll('input[type="text"]');
+    await text[0]?.setValue('The Cartographer’s Apprentice');
+    await text[1]?.setValue('Adults who like quiet, strange things');
+    await text[2]?.setValue('melancholy, wry');
+    await wrapper
+      .find('textarea')
+      .setValue('A mapmaker inherits a map of a place that is not there.');
+    await wrapper.vm.$nextTick();
+  }
+
+  it('offers a form rather than stating the problem', async () => {
+    const wrapper = await mountStudio(StoryView, { locale: 'en', path: EMPTY_PROJECT });
+    await flush(30);
+
+    expect(wrapper.text()).toContain('Start the series');
+    expect(wrapper.find('textarea').exists()).toBe(true);
+  });
+
+  it('will not start on a blank premise', async () => {
+    const wrapper = await mountStudio(StoryView, { locale: 'en', path: EMPTY_PROJECT });
+    await flush(30);
+
+    const button = wrapper.findAll('button').find((b) => b.text().includes('Start the series'));
+    expect(button?.attributes('disabled')).toBeDefined();
+
+    // A title alone is not enough: the premise is what the outliner writes from, and a
+    // series started without one produces an outline about nothing. Neither is a title
+    // and a premise, because S0 binds every later stage to the audience and the tone.
+    await wrapper.findAll('input[type="text"]')[0]?.setValue('The Cartographer');
+    await wrapper.vm.$nextTick();
+    expect(button?.attributes('disabled')).toBeDefined();
+
+    await wrapper.find('textarea').setValue('A mapmaker inherits an impossible map.');
+    await wrapper.vm.$nextTick();
+    expect(button?.attributes('disabled')).toBeDefined();
+  });
+
+  it('creates the series and opens it, rather than leaving a picker to use', async () => {
+    const wrapper = await mountStudio(StoryView, { locale: 'en', path: EMPTY_PROJECT });
+    await flush(30);
+    await fillBrief(wrapper);
+
+    const button = wrapper.findAll('button').find((b) => b.text().includes('Start the series'));
+    await button?.trigger('click');
+    await flush(20);
+    await wrapper.vm.$nextTick();
+
+    const store = useStoryStore();
+    expect(store.seriesId).not.toBeNull();
+    expect(store.series?.title).toBe('The Cartographer’s Apprentice');
+    // Opened, not merely created: the form is gone and the screen is the story screen.
+    expect(wrapper.text()).not.toContain('Start the series');
+  });
+
+  it('runs S0 and produces the shortlist S3 refuses to work without', async () => {
+    const wrapper = await mountStudio(StoryView, { locale: 'en', path: EMPTY_PROJECT });
+    await flush(30);
+    await fillBrief(wrapper);
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Start the series'))
+      ?.trigger('click');
+    await flush(20);
+
+    // The whole reason this form asks for an audience and tone words rather than just a
+    // premise. A series with a complete outline and an empty shortlist is one the
+    // Characters screen can do nothing with, and that was the state every series the
+    // studio created used to be in.
+    const store = useStoryStore();
+    expect(store.castCandidates.length).toBeGreaterThan(0);
+  });
+
+  it('keeps what was typed when the server refuses', async () => {
+    const wrapper = await mountStudio(StoryView, { locale: 'en', path: EMPTY_PROJECT });
+    await flush(30);
+
+    const store = useStoryStore();
+    const premise = 'A mapmaker inherits a map of a place that is not there.';
+    await wrapper.find('input[type="text"]').setValue('Doomed');
+    await wrapper.find('textarea').setValue(premise);
+    await wrapper.vm.$nextTick();
+
+    // A blank title is what the server itself would reject, so this exercises the same
+    // path a network failure takes: `startSeries` returns false and nothing is cleared.
+    const ok = await store.startSeries('prj_not_a_real_id' as never, {
+      title: '',
+      premise: '',
+      targetAudience: '',
+      toneWords: [],
+      episodeMinutes: 8,
+      seasons: 1,
+      episodesPerSeason: 6,
+    });
+    expect(ok).toBe(false);
+    await wrapper.vm.$nextTick();
+
+    // The minute someone spent writing this survives the failure.
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe(premise);
+  });
+});

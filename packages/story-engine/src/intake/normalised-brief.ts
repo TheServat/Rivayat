@@ -19,6 +19,7 @@
 import { z } from 'zod';
 import {
   BriefKind,
+  CastCandidate,
   Importance,
   Label,
   Locale,
@@ -29,47 +30,15 @@ import {
 
 // ── cast ────────────────────────────────────────────────────────────────────
 
-export const CAST_ROLES = [
-  'protagonist',
-  'antagonist',
-  'ally',
-  'mentor',
-  'foil',
-  'love-interest',
-  'minor',
-] as const;
-
-export const CastRole = z.enum(CAST_ROLES);
-export type CastRole = z.infer<typeof CastRole>;
-
 /**
- * A character the story cannot be told without, spotted at intake.
+ * Re-exported, not redefined.
  *
- * Auto-casting (prior-art §A, from `AI-Story-To-Movie`) starts here: the recurring cast
- * has to be identified before any scene is composed, because the asset registry is keyed
- * on character identity rather than on scene. A candidate is not yet a character sheet -
- * it is the shortlist S3 will write sheets for.
+ * `CastCandidate` moved to `@rv/contracts` when it began crossing the HTTP boundary -
+ * the studio renders the shortlist and cannot import an engine. Everything in this
+ * package that already imported it from here keeps working, and there is still exactly
+ * one definition.
  */
-export const CastCandidate = z.strictObject({
-  name: Label.describe(
-    'The name the source uses, or the clearest handle it offers - "the ferryman" is a ' +
-      'better answer than an invented name.',
-  ),
-  role: CastRole.describe('Structural function in this story, not job title.'),
-  importance: Importance.describe(
-    'How much screen time and budget this character has earned. Reserve "lead" for the ' +
-      'one or two the series is about.',
-  ),
-  premiseRole: Prose.describe(
-    'What this character does to the story, in one or two sentences. Not a biography - ' +
-      'the reason the plot needs them.',
-  ),
-  distinguishingTrait: Prose.describe(
-    'The single thing that makes them not interchangeable with the next character. If ' +
-      'the source gives none, say that rather than inventing one.',
-  ),
-});
-export type CastCandidate = z.infer<typeof CastCandidate>;
+export { CAST_ROLES, CastRole, CastCandidate } from '@rv/contracts';
 
 // ── compression ─────────────────────────────────────────────────────────────
 

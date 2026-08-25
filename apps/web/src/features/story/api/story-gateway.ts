@@ -23,6 +23,8 @@
  */
 
 import { type ProjectId, SeriesCard, type SeriesId } from '@rv/contracts';
+
+import { IntakeReport, type StoryBrief } from './intake';
 import { z } from 'zod';
 
 import type { ApiError } from '../../../api/errors';
@@ -73,7 +75,28 @@ export function routeFromMessage(error: ApiError): string {
 
 export interface StoryGateway {
   listSeries: (projectId: ProjectId, signal?: AbortSignal) => Promise<readonly SeriesCard[]>;
+  /**
+   * Starts a series inside a project.
+   *
+   * The first step of the whole pipeline, and the one the studio could not take: a
+   * project began with no series, the Story screen said "no series yet", and nothing
+   * anywhere could make one. Every screen after this depends on a series id, so the
+   * studio was unusable for any project it had not been seeded with.
+   */
+  createSeries: (
+    projectId: ProjectId,
+    draft: { readonly title: string; readonly premise: string },
+    signal?: AbortSignal,
+  ) => Promise<SeriesCard>;
   loadTree: (seriesId: SeriesId, signal?: AbortSignal) => Promise<StoryTree>;
+  /**
+   * S0: reads the idea and produces the brief every later stage binds to.
+   *
+   * Including the cast shortlist, which is the half that matters here - S3 refuses to
+   * build a cast without one, and until this route existed the studio could outline a
+   * whole series and never produce it.
+   */
+  runIntake: (seriesId: SeriesId, brief: StoryBrief, signal?: AbortSignal) => Promise<IntakeReport>;
   /**
    * Grows the tree by exactly one level.
    *
@@ -103,6 +126,30 @@ export class HttpStoryGateway implements StoryGateway {
       method: 'GET',
       path: `/projects/${projectId}/series`,
       schema: SeriesList,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  createSeries(
+    projectId: ProjectId,
+    draft: { readonly title: string; readonly premise: string },
+    signal?: AbortSignal,
+  ): Promise<SeriesCard> {
+    return this.#transport.send({
+      method: 'POST',
+      path: `/projects/${projectId}/series`,
+      schema: SeriesCard,
+      body: draft,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  runIntake(seriesId: SeriesId, brief: StoryBrief, signal?: AbortSignal): Promise<IntakeReport> {
+    return this.#transport.send({
+      method: 'POST',
+      path: `/series/${seriesId}/intake`,
+      schema: IntakeReport,
+      body: { brief },
       ...(signal === undefined ? {} : { signal }),
     });
   }

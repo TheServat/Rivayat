@@ -11,6 +11,8 @@ import EmptyState from '../../components/EmptyState.vue';
 import ErrorNotice from '../../components/ErrorNotice.vue';
 import RegistrationMark from '../../components/RegistrationMark.vue';
 import StoryMotif from '../../components/motifs/StoryMotif.vue';
+
+import StartSeriesPanel from './components/StartSeriesPanel.vue';
 import { formatNanoUsd, formatNumber } from '../../i18n/format';
 import { useLocaleStore } from '../../stores/locale.store';
 import { useProjectsStore } from '../../stores/projects.store';
@@ -160,8 +162,16 @@ function onSeriesChange(event: Event): void {
       @retry="projectId && story.load(projectId)"
     />
 
+    <!--
+      No series yet: a form, not a sentence. This branch used to state the problem and
+      offer nothing, on the screen where the pipeline begins.
+    -->
+    <StartSeriesPanel
+      v-else-if="story.seriesList.length === 0 && projectId !== null"
+      :project-id="projectId"
+    />
     <p v-else-if="story.seriesList.length === 0" class="rv-story__none">
-      {{ t('story.context.noSeries') }}
+      {{ t('story.context.noProject') }}
     </p>
 
     <!-- ── empty: an invitation, and one action ────────────────────────────── -->

@@ -13,3 +13,4 @@
 export * from './brief';
 export * from './shot';
 export * from './story-bible';
+export * from './cast-candidate';

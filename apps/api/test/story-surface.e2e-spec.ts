@@ -79,6 +79,63 @@ describe('the story surface', () => {
     expect(body.nodes).toHaveLength(1);
   });
 
+  /**
+   * S0, which the Story screen advertised in its own model panel and could not run.
+   *
+   * Intake produces the cast shortlist S3 refuses to work without. It ran only inside a
+   * pipeline run, so a series outlined level-by-level from the studio ended up with a
+   * complete tree and an empty shortlist - and the Characters screen could build nothing,
+   * for a series that had thirty-four story nodes in it.
+   */
+  it('404s intake for a series that does not exist, rather than 404ing the route', async () => {
+    const response = await request(harness.server)
+      .post('/api/series/ser_01JQZK3M7X8YB4N2VTC6WPHRDZ/intake')
+      .send({
+        brief: {
+          kind: 'idea',
+          idea: 'A woman guards a well.',
+          targetAudience: 'Adults who like slow folk horror',
+          toneWords: ['austere', 'warm'],
+          targetEpisodeDurationMs: 480_000,
+          episodes: { seasons: 1, episodesPerSeason: 6 },
+          constraints: { ratingCeiling: 'teen', mustNotAppear: [] },
+        },
+      })
+      .expect(404);
+
+    // A 404 for a *thing*, carrying the taxonomy - not the HTML 404 of a missing route,
+    // which is the distinction every gateway in the studio is written around.
+    expect((response.body as { error?: { code?: string } }).error?.code).toBe('NOT_FOUND');
+  });
+
+  it('rejects a brief whose kind names no intake front door', async () => {
+    await request(harness.server)
+      .post(`/api/series/${seriesId}/intake`)
+      .send({ brief: { kind: 'haiku', idea: 'A woman guards a well.' } })
+      .expect(400);
+  });
+
+  it('refuses intake that needs a model, in the taxonomy, rather than hanging', async () => {
+    const response = await request(harness.server)
+      .post(`/api/series/${seriesId}/intake`)
+      .send({
+        brief: {
+          kind: 'idea',
+          idea: 'A woman guards a well and will not say why.',
+          targetAudience: 'Adults who like slow folk horror',
+          toneWords: ['austere', 'warm'],
+          targetEpisodeDurationMs: 480_000,
+          episodes: { seasons: 1, episodesPerSeason: 6 },
+          constraints: { ratingCeiling: 'teen', mustNotAppear: [] },
+        },
+      });
+
+    // No provider keys in this harness. Intake reads an idea with a model, so it cannot
+    // succeed here - but it must fail as a named refusal, not a timeout.
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect((response.body as { error?: { code?: string } }).error?.code).toBeDefined();
+  });
+
   it('refuses a level whose parents do not exist, and says which level to build', async () => {
     const response = await request(harness.server)
       .post(`/api/series/${seriesId}/outline/expand`)

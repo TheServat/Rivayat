@@ -26,14 +26,17 @@
  */
 
 import {
+  Brief,
   IsoInstant,
   Label,
   NanoUsdAmount,
+  NonEmptyString,
   OutlineEnvelope,
   Prose,
   Provenance,
   SeriesId,
 } from '@rv/contracts';
+import { CastCandidate } from '@rv/story-engine';
 import { z } from 'zod';
 
 // ── the seven levels ────────────────────────────────────────────────────────
@@ -179,6 +182,38 @@ export const ExpandOutlineBody = z.strictObject({
   childCount: ChildCountBounds.optional(),
 });
 export type ExpandOutlineBody = z.infer<typeof ExpandOutlineBody>;
+
+/**
+ * `POST /api/series/:id/intake` - S0, from the Story screen.
+ *
+ * S0 read the author's idea and produced the normalised brief every later stage binds
+ * to, including the **cast shortlist**. It ran only inside a pipeline run, so a series
+ * outlined from the Story screen had a complete tree and no shortlist - and S3 refuses
+ * without one. The screen listed "S0 Intake" in its model panel and had no way to run it.
+ *
+ * The whole `Brief` rather than a subset. Intake's five front doors are chosen by
+ * `kind`, and a route that accepted only an idea would quietly make the other four
+ * unreachable from the studio.
+ */
+export const RunIntakeBody = z.strictObject({
+  brief: Brief,
+});
+export type RunIntakeBody = z.infer<typeof RunIntakeBody>;
+
+/**
+ * What S0 leaves behind, as the screen needs to see it.
+ *
+ * The shortlist is the load-bearing half - it is what S3 was missing - so it is named
+ * rather than folded into a success flag. The counts let the screen say "six characters,
+ * four tone words" without shipping the whole normalised brief to render one sentence.
+ */
+export const IntakeReport = z.strictObject({
+  seriesId: SeriesId,
+  workingTitle: NonEmptyString,
+  premise: NonEmptyString,
+  castCandidates: z.array(CastCandidate),
+});
+export type IntakeReport = z.infer<typeof IntakeReport>;
 
 /**
  * `PATCH /api/series/:id` - the premise, in the author's own words.

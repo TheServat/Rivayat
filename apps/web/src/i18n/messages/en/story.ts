@@ -8,11 +8,35 @@ export default {
   title: 'Story',
   subtitle: 'An idea becomes a tree of seasons, episodes, acts, sequences, scenes and beats.',
 
+  start: {
+    heading: 'Start the series',
+    hint: 'A project holds one series, and every screen after this one needs it. Nothing else can begin until it exists.',
+    titleLabel: 'Title',
+    titlePlaceholder: 'The Lamplighter’s Debt',
+    premiseLabel: 'Premise',
+    premisePlaceholder:
+      'A lamplighter in a canal city keeps one lamp burning that the guild has ordered dark.',
+    premiseHint:
+      'This is what the outliner writes from, so the more specific it is, the less it invents.',
+    audienceLabel: 'Audience',
+    audiencePlaceholder: 'Adults who grew up on slow European animation',
+    audienceHint:
+      'Name the age band and the taste. “Everyone” excludes nothing and steers nothing.',
+    toneLabel: 'Tone words',
+    tonePlaceholder: 'melancholy, wry, warm',
+    toneHint: 'Comma separated. Pick words that exclude something.',
+    minutesLabel: 'Minutes per episode',
+    seasonsLabel: 'Seasons',
+    perSeasonLabel: 'Episodes per season',
+    action: 'Start the series',
+    starting: 'Starting…',
+  },
   context: {
     project: 'Project',
     series: 'Series',
     chooseSeries: 'Choose a series',
     noSeries: 'This project has no series yet.',
+    noProject: 'No project is selected, so there is nothing to start a series inside.',
     premise: 'Series premise',
   },
 

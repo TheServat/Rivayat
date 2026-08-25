@@ -1,4 +1,4 @@
-import type { ProjectId, SeriesCard, SeriesId } from '@rv/contracts';
+import type { CastCandidate, ProjectId, SeriesCard, SeriesId } from '@rv/contracts';
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef, type ComputedRef, type Ref } from 'vue';
 
@@ -50,6 +50,25 @@ const EMPTY_TREE = (seriesId: SeriesId): StoryTree => ({ seriesId, nodes: [] });
  * four levels of outline is worth a great deal more than an empty screen with a message
  * on it.
  */
+/**
+ * What a person types to start a series.
+ *
+ * Two halves that arrive together but do different jobs. The title and premise create
+ * the series; the rest is the S0 brief, which is what produces the cast shortlist every
+ * later stage needs. Asking for them in one form is a product decision - they are one
+ * decision to the person making it - but they are two calls, and the second can fail
+ * without undoing the first.
+ */
+export interface SeriesDraft {
+  readonly title: string;
+  readonly premise: string;
+  readonly targetAudience: string;
+  readonly toneWords: readonly string[];
+  readonly episodeMinutes: number;
+  readonly seasons: number;
+  readonly episodesPerSeason: number;
+}
+
 export interface StoryStore {
   readonly status: Ref<StoryStatus>;
   readonly error: Ref<ApiError | null>;
@@ -78,6 +97,12 @@ export interface StoryStore {
   impactOf: (nodeId: string) => EditImpact;
   load: (projectId: ProjectId) => Promise<void>;
   chooseSeries: (seriesId: SeriesId) => Promise<void>;
+  /** Starts the series a project needs before any other screen has anything to show. */
+  startSeries: (projectId: ProjectId, draft: SeriesDraft, locale?: 'fa' | 'en') => Promise<boolean>;
+  /** Re-runs S0 on the current series, after a failure or an edited premise. */
+  runIntake: (draft: SeriesDraft, locale?: 'fa' | 'en') => Promise<boolean>;
+  readonly starting: Ref<boolean>;
+  readonly castCandidates: Ref<readonly CastCandidate[]>;
   buildNextLevel: () => Promise<void>;
   buildRemaining: () => Promise<void>;
   stopBuilding: () => void;
@@ -102,6 +127,15 @@ export const useStoryStore = defineStore('story', (): StoryStore => {
   const levelInFlight = ref<OutlineLevel | null>(null);
   const selectedId = ref<string | null>(null);
   const saving = ref(false);
+  const starting = ref(false);
+  /**
+   * The shortlist S0 produced, which S3 writes sheets for.
+   *
+   * Held here so the Story screen can say whether intake produced anything. An outline
+   * with thirty-four nodes and an empty shortlist is a series the Characters screen can
+   * do nothing with, and until this was on screen there was no way to tell the two apart.
+   */
+  const castCandidates = shallowRef<readonly CastCandidate[]>([]);
   const savedAt = ref(0);
   // Which branches are open. The default is the top three levels: an outline that
   // arrives fully expanded is 64 rows and 64 tab stops, and nobody reads it.
@@ -196,6 +230,112 @@ export const useStoryStore = defineStore('story', (): StoryStore => {
       if (OUTLINE_LEVELS.indexOf(node.level) < depth) next.add(node.id);
     }
     open.value = next;
+  }
+
+  /**
+   * Creates the series and opens it, in one action.
+   *
+   * Opening it is the point rather than a courtesy: a person who just described a series
+   * wants to write it, and leaving them on a screen that now says "one series exists"
+   * with a picker to use would be an extra step to undo a state they never wanted.
+   *
+   * Returns whether it worked, so the caller can keep the form's contents on a failure.
+   * Clearing a premise someone spent a minute writing because the server was briefly
+   * unreachable is the kind of small cruelty that makes a tool feel hostile.
+   */
+  async function startSeries(
+    projectId: ProjectId,
+    draft: SeriesDraft,
+    locale: 'fa' | 'en' = 'en',
+  ): Promise<boolean> {
+    starting.value = true;
+    error.value = null;
+    try {
+      const created = await gateway().createSeries(projectId, {
+        title: draft.title,
+        premise: draft.premise,
+      });
+      seriesList.value = [...seriesList.value, created];
+      seriesId.value = created.id;
+
+      // S0, immediately. The series exists either way, so a failure here leaves a real
+      // series with no shortlist rather than a half-created one - which is a state the
+      // screen can show and offer to fix, and is why `intakeDone` is separate from
+      // whether a series exists at all.
+      const report = await gateway().runIntake(created.id, {
+        kind: 'idea',
+        idea: draft.premise,
+        workingTitle: draft.title,
+        language: locale,
+        targetAudience: draft.targetAudience,
+        toneWords: [...draft.toneWords],
+        targetEpisodeDurationMs: Math.round(draft.episodeMinutes * 60_000),
+        episodes: {
+          seasons: draft.seasons,
+          episodesPerSeason: draft.episodesPerSeason,
+          // Stated rather than defaulted: an open-ended series must not resolve its
+          // central question, and that is not a choice to make on someone's behalf.
+          openEnded: false,
+        },
+        constraints: { mustNotAppear: [], ratingCeiling: 'teen' },
+        references: [],
+      });
+      castCandidates.value = report.castCandidates;
+
+      tree.value = await gateway().loadTree(created.id);
+      status.value = 'ready';
+      return true;
+    } catch (caught) {
+      error.value = asApiError(caught, 'series-create-failed', 'the series could not be started');
+      // A series that was created before intake failed is still the current series: the
+      // screen should open on it, so the person can retry the half that failed rather
+      // than start a second series beside the first.
+      if (seriesId.value !== null) status.value = 'ready';
+      return false;
+    } finally {
+      starting.value = false;
+    }
+  }
+
+  /**
+   * Runs S0 on the current series, on its own.
+   *
+   * The retry for the half of `startSeries` that can fail by itself, and the way to
+   * re-run intake after correcting a premise - which is the whole reason intake is not
+   * folded into planting the root.
+   */
+  async function runIntake(draft: SeriesDraft, locale: 'fa' | 'en' = 'en'): Promise<boolean> {
+    const current = seriesId.value;
+    if (current === null) return false;
+    starting.value = true;
+    error.value = null;
+    try {
+      const report = await gateway().runIntake(current, {
+        kind: 'idea',
+        idea: draft.premise,
+        workingTitle: draft.title,
+        language: locale,
+        targetAudience: draft.targetAudience,
+        toneWords: [...draft.toneWords],
+        targetEpisodeDurationMs: Math.round(draft.episodeMinutes * 60_000),
+        episodes: {
+          seasons: draft.seasons,
+          episodesPerSeason: draft.episodesPerSeason,
+          // Stated rather than defaulted: an open-ended series must not resolve its
+          // central question, and that is not a choice to make on someone's behalf.
+          openEnded: false,
+        },
+        constraints: { mustNotAppear: [], ratingCeiling: 'teen' },
+        references: [],
+      });
+      castCandidates.value = report.castCandidates;
+      return true;
+    } catch (caught) {
+      error.value = asApiError(caught, 'intake-failed', 'S0 intake could not be run');
+      return false;
+    } finally {
+      starting.value = false;
+    }
   }
 
   async function load(projectId: ProjectId): Promise<void> {
@@ -404,6 +544,10 @@ export const useStoryStore = defineStore('story', (): StoryStore => {
     impactOf,
     load,
     chooseSeries,
+    startSeries,
+    runIntake,
+    starting,
+    castCandidates,
     buildNextLevel,
     buildRemaining,
     stopBuilding,

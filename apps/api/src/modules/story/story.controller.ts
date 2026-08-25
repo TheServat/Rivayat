@@ -37,15 +37,19 @@ import {
   type Logger,
   type Result,
 } from '@rv/shared-kernel';
+import { IntakeUseCase } from '@rv/story-engine';
 import { z } from 'zod';
 
 import type { SeriesRepository } from '../../application/ports/repository.ports';
 import type { SeriesCard } from '../../application/resources';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
-import type { OutlineService } from '../../story/outline.service';
+import { storedContextOf, type OutlineService } from '../../story/outline.service';
+import { contextFor } from '../../story/story-stage.handler';
 import type { StoryEngineFactory } from '../../story/story-engine.deps';
 import {
   ExpandOutlineBody,
+  IntakeReport,
+  RunIntakeBody,
   StoryNodeEdit,
   UpdateSeriesBody,
   type StoryExpansion,
@@ -117,6 +121,62 @@ export class StoryController {
    * brief, and asking a model to restate a premise the author just typed is asking it to
    * paraphrase canon. So it is free, instant, and marked `author`.
    */
+  /**
+   * S0, run on demand from the Story screen.
+   *
+   * The stage that produces the normalised brief every later stage binds to - including
+   * the cast shortlist S3 refuses to run without. It ran only inside a pipeline run, so
+   * a series outlined level-by-level from this screen ended up with a complete tree and
+   * no shortlist, and the Characters screen could never build anything. The screen
+   * listed S0 in its own model panel the whole time and had no way to run it.
+   *
+   * It writes the context and the shortlist onto the stored document but does **not**
+   * expand any level. Intake and outlining are separate decisions - one reads the idea,
+   * the other spends money per level - and folding them together would make re-running
+   * intake after an edited premise cost a whole tree.
+   */
+  @Post('series/:seriesId/intake')
+  async intake(
+    @Param('seriesId', new ZodValidationPipe(SeriesId)) seriesId: SeriesId,
+    @Body(new ZodValidationPipe(RunIntakeBody)) body: RunIntakeBody,
+  ): Promise<Result<IntakeReport>> {
+    const found = await this.#series.findById(seriesId);
+    if (isErr(found)) return found;
+    if (found.value === null) return err(new NotFoundError('series', seriesId));
+
+    const result = await new IntakeUseCase(this.#engine.create(this.#logger)).execute({
+      brief: body.brief,
+    });
+    if (isErr(result)) return result;
+
+    const context = contextFor(result.value.brief, undefined);
+    const recorded = await this.#store.mutate(seriesId, (document) =>
+      ok({
+        ...document,
+        context: storedContextOf(context),
+        castCandidates: [...result.value.brief.castCandidates],
+      }),
+    );
+    if (isErr(recorded)) return recorded;
+
+    // The premise the author typed is corrected to the one intake normalised, because
+    // every expansion below binds to *that* text - and a screen still showing the
+    // original would be showing something no stage is reading.
+    const updated = await this.#series.update(
+      seriesId,
+      { title: result.value.brief.workingTitle, premise: result.value.brief.premise },
+      toIso(this.#clock.now()),
+    );
+    if (isErr(updated)) return updated;
+
+    return ok({
+      seriesId,
+      workingTitle: result.value.brief.workingTitle,
+      premise: result.value.brief.premise,
+      castCandidates: [...result.value.brief.castCandidates],
+    });
+  }
+
   @Post('series/:seriesId/outline/expand')
   async expand(
     @Param('seriesId', new ZodValidationPipe(SeriesId)) seriesId: SeriesId,
