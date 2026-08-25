@@ -4,6 +4,7 @@ import { PhStackPlus, PhX } from '@phosphor-icons/vue';
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 
+import BlobImage from '../../components/BlobImage.vue';
 import AppBadge from '../../components/AppBadge.vue';
 import AppButton from '../../components/AppButton.vue';
 import type { AssetProduceReport } from '../../api/schemas/assets';
@@ -207,6 +208,7 @@ function boneParentName(parentId: string | null): string | null {
       <table v-else class="rv-detail__table">
         <thead>
           <tr>
+            <th scope="col">{{ t('assets.parts.image') }}</th>
             <th scope="col">{{ t('assets.parts.zOrder') }}</th>
             <th scope="col">{{ t('assets.parts.name') }}</th>
             <th scope="col">{{ t('assets.parts.role') }}</th>
@@ -216,6 +218,9 @@ function boneParentName(parentId: string | null): string | null {
         </thead>
         <tbody>
           <tr v-for="part in parts" :key="part.id">
+            <td>
+              <BlobImage :hash="part.imageHash ?? null" :alt="part.name" size="thumb" />
+            </td>
             <td class="rv-tabular">{{ formatNumber(part.zOrder, localeStore.locale) }}</td>
             <th scope="row" class="rv-mono" dir="ltr">{{ part.name }}</th>
             <td class="rv-mono" dir="ltr">{{ part.role }}</td>

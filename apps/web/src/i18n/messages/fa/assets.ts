@@ -177,6 +177,7 @@ export default {
   },
 
   parts: {
+    image: 'تصویر',
     heading: 'قطعه‌ها',
     hint: 'لایه‌های شفاف با ترتیب z؛ rig روی همین‌ها می‌نشیند.',
     name: 'نام',
@@ -266,5 +267,9 @@ export default {
     appendedBody: 'نسخهٔ تازه ثبت شد و نسخهٔ پیشین سر جای خود است.',
     previousStill: 'نسخهٔ پیشین: {id}',
     newVersion: 'نسخهٔ تازه: {id}',
+  },
+  image: {
+    none: 'تصویری ثبت نشده',
+    missing: 'تصویر در انبار نیست',
   },
 };

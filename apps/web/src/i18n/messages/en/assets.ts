@@ -164,6 +164,7 @@ export default {
   },
 
   parts: {
+    image: 'Image',
     heading: 'Parts',
     hint: 'Transparent layers with a z-order. The rig binds to these.',
     name: 'Name',
@@ -253,5 +254,9 @@ export default {
     appendedBody: 'The new version is registered and the previous one is exactly where it was.',
     previousStill: 'Previous version: {id}',
     newVersion: 'New version: {id}',
+  },
+  image: {
+    none: 'No image recorded',
+    missing: 'Image not in the store',
   },
 };
