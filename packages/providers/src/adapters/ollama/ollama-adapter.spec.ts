@@ -63,7 +63,11 @@ describe('OllamaAdapter.complete', () => {
     expect(request?.method).toBe('POST');
     const body = request?.json as Record<string, unknown>;
     expect(body.format).toEqual(schema);
-    expect(body.stream).toBe(false);
+    // Streamed, and not because anyone wanted tokens as they arrive: Node's fetch caps
+    // the wait for the first response header at 300 seconds, and Ollama with
+    // `stream: false` sends nothing until generation finishes - so every call longer
+    // than five minutes failed as `fetch failed`. The ports are still request/response.
+    expect(body.stream).toBe(true);
   });
 
   it('sets temperature 0 and think false for extraction, per research §1', async () => {
@@ -121,6 +125,8 @@ describe('OllamaAdapter.complete', () => {
   });
 
   it('reports a malformed 200 body as a retryable ProviderError', async () => {
+    // No `done`, which is what a truncated stream looks like: the chunks that arrived
+    // reassemble into something schema-shaped, and nothing ever reported completion.
     const stub = new FetchStub().on('/api/chat', { json: { message: {} } });
     const outcome = await adapterWith(stub).complete({
       messages: [{ role: 'user', content: 'x' }],

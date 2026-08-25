@@ -104,6 +104,125 @@ export class JsonHttpClient {
    * stream back. Separate from `postJson` rather than a flag on it because the return
    * type differs, and separate from `getBytes` because the request has a body.
    */
+  /**
+   * POSTs and reads a newline-delimited JSON stream, returning the final object.
+   *
+   * This exists because of a timeout nobody set. Node's fetch caps the wait for the
+   * *first response header* at 300 seconds, and a local model asked for a large
+   * structured output sends nothing at all until it has finished generating - so a
+   * generation that takes six minutes fails at five with `fetch failed`, which reads as
+   * a network fault and is not one. Raising our own timeout cannot help: the cap is
+   * below it and belongs to the HTTP stack.
+   *
+   * Streaming moves the first byte to the start of generation rather than the end, so
+   * the header deadline is met immediately and the gap between chunks - a token or two -
+   * is never close to any limit. The caller gets the same object it got before; the
+   * difference is only in when the bytes cross the wire.
+   *
+   * `merge` folds each chunk into the accumulating result, because the shape of a
+   * streamed response is the provider's business: Ollama sends partial `message.content`
+   * to be concatenated and a final chunk carrying the counts.
+   */
+  async postNdjson<T>(
+    path: string,
+    body: unknown,
+    merge: (accumulated: T | undefined, chunk: unknown) => T,
+    options: RequestOptions = {},
+  ): Promise<Result<T, AppError>> {
+    const operation = `POST ${path}`;
+    if (options.signal?.aborted === true) return err(new CancelledError(operation));
+
+    const timeoutMs = options.timeoutMs ?? this.#timeoutMs;
+    const signal = combineSignals(options.signal, timeoutMs);
+
+    let response: Response;
+    try {
+      response = await this.#fetch(`${this.#baseUrl}${path}`, {
+        method: 'POST',
+        headers: { ...this.#headers, 'content-type': 'application/json', ...options.headers },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (caught) {
+      return err(
+        errorFromThrown({
+          provider: this.#provider,
+          operation,
+          caught,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          timeoutMs,
+        }),
+      );
+    }
+
+    if (!response.ok) {
+      const text = await readTextSafely(response);
+      return err(
+        errorFromResponse({
+          provider: this.#provider,
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+          body: text,
+          nowMs: this.#clock.now(),
+          operation,
+        }),
+      );
+    }
+
+    const stream = response.body;
+    if (stream === null) {
+      return err(
+        new ProviderError({
+          message: `${operation} answered with no body to stream`,
+          provider: this.#provider,
+          retryable: true,
+          context: { operation },
+        }),
+      );
+    }
+
+    let accumulated: T | undefined;
+    let buffer = '';
+    try {
+      const decoder = new TextDecoder();
+      for await (const bytes of streamChunks(stream)) {
+        buffer += decoder.decode(bytes, { stream: true });
+        // Split on newlines and keep the tail: a chunk boundary lands mid-line often
+        // enough that parsing what arrived would fail on perfectly good output.
+        const lines = buffer.split(NEWLINE);
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.trim().length === 0) continue;
+          accumulated = merge(accumulated, JSON.parse(line));
+        }
+      }
+      if (buffer.trim().length > 0) accumulated = merge(accumulated, JSON.parse(buffer));
+    } catch (caught) {
+      return err(
+        errorFromThrown({
+          provider: this.#provider,
+          operation,
+          caught,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          timeoutMs,
+        }),
+      );
+    }
+
+    if (accumulated === undefined) {
+      return err(
+        new ProviderError({
+          message: `${operation} streamed no complete line`,
+          provider: this.#provider,
+          retryable: true,
+          context: { operation },
+        }),
+      );
+    }
+    return ok(accumulated);
+  }
+
   async postBytes(
     path: string,
     body: unknown,
@@ -210,6 +329,29 @@ export class JsonHttpClient {
         }),
       );
     }
+  }
+}
+
+/** The delimiter in newline-delimited JSON, named so the split reads as what it is. */
+const NEWLINE = '\n';
+
+/**
+ * A `ReadableStream` as an async iterable.
+ *
+ * Node's streams are iterable already; the DOM type this is declared as is not, in every
+ * runtime that matters. Reading it through a reader works in both, and avoids a cast
+ * that would be a lie in one of them.
+ */
+async function* streamChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      yield value;
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 

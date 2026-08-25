@@ -62,6 +62,8 @@ import {
 import { usage } from '../../ports/common';
 import { elapsedSince, numberOr, toBase64 } from '../shared';
 import {
+  mergeChatChunk,
+  type OllamaChatChunks,
   type OllamaChatMessage,
   type OllamaChatRequest,
   type OllamaEmbedRequest,
@@ -311,7 +313,7 @@ export class OllamaAdapter
     return {
       model: this.#model,
       messages,
-      stream: false,
+      stream: true,
       think: options.think,
       ...(options.format === undefined ? {} : { format: options.format }),
       options: {
@@ -327,13 +329,21 @@ export class OllamaAdapter
     body: OllamaChatRequest,
     signal: AbortSignal | undefined,
   ): Promise<Result<OllamaChatResponse, AppError>> {
-    const response = await this.#http.postJson('/api/chat', body, {
-      ...(signal === undefined ? {} : { signal }),
-    });
+    const response = await this.#http.postNdjson<OllamaChatChunks>(
+      '/api/chat',
+      body,
+      mergeChatChunk,
+      { ...(signal === undefined ? {} : { signal }) },
+    );
     if (isErr(response)) return response;
 
     const parsed = OllamaChatResponse.safeParse(response.value);
     if (!parsed.success) return err(this.#malformed('/api/chat', parsed.error.issues.length));
+    // A stream that never said `done` is a truncated one. This check exists because
+    // streaming took the old one away: reassembly fills `content` with the empty string
+    // it accumulated, so a body that was never a chat response at all now satisfies the
+    // schema. The terminal flag is the thing only a complete response has.
+    if (parsed.data.done !== true) return err(this.#malformed('/api/chat', 0));
     return ok(parsed.data);
   }
 
