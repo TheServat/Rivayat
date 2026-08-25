@@ -15,6 +15,15 @@ export default {
     noSeries: 'This project has no series yet.',
   },
 
+  build: {
+    heading: 'Build the cast',
+    hint: 'S3 writes a character sheet and a full state grid for each name S0 found, deriving every appearance from the locked style.',
+    action: 'Build the cast',
+    running: 'Building the cast…',
+    seed: 'Seed',
+    seedHint:
+      'The same seed gives the same cast. Change it to get a different one, rather than pressing again and hoping.',
+  },
   empty: {
     lead: 'No characters exist yet.',
     hint: 'The cast is written from the series bible: the story first, then the people in it.',

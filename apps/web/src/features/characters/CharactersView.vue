@@ -13,6 +13,7 @@ import RegistrationMark from '../../components/RegistrationMark.vue';
 import { useLocaleStore } from '../../stores/locale.store';
 import { useProjectsStore } from '../../stores/projects.store';
 
+import BuildCastPanel from './components/BuildCastPanel.vue';
 import CastList from './components/CastList.vue';
 import CharacterSheetPanel from './components/CharacterSheetPanel.vue';
 import KnowledgeGraph from './components/KnowledgeGraph.vue';
@@ -166,6 +167,12 @@ function onTabKey(event: KeyboardEvent, index: number): void {
       </template>
       <p class="rv-chars__lead">{{ t('characters.empty.lead') }}</p>
       <p class="rv-chars__subtitle">{{ t('characters.empty.hint') }}</p>
+      <!--
+        The action, not just the direction. This said "go to the Story screen" and left
+        someone who had already been there with nowhere to go: the shortlist S0 produces
+        is what S3 turns into characters, and nothing on this screen could ask for that.
+      -->
+      <BuildCastPanel />
       <RouterLink class="rv-chars__link" to="/story">{{ t('characters.empty.action') }}</RouterLink>
     </EmptyState>
 
