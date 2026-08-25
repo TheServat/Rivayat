@@ -20,7 +20,14 @@
  * keep the old entity anyway - so the skip is explicit, counted, and reported.
  */
 
-import { StyleBible, type EntityId, type PipelineStageKey, type SeriesId } from '@rv/contracts';
+import {
+  StyleBible,
+  StyleBibleId,
+  type EntityId,
+  type PipelineStageKey,
+  type SeriesId,
+} from '@rv/contracts';
+import { assertUsableForGeneration } from '@rv/core-domain';
 import type { StructuredTrace } from '@rv/prompt-kit';
 import {
   ART_DIRECTOR,
@@ -30,6 +37,7 @@ import {
   type StoryEngineDeps,
 } from '@rv/story-engine';
 import {
+  NotFoundError,
   ValidationError,
   err,
   isErr,
@@ -40,9 +48,11 @@ import {
 } from '@rv/shared-kernel';
 import { z } from 'zod';
 
+import type { ProjectRepository } from '../application/ports/repository.ports';
 import { toValidationError } from '../common/zod-validation.pipe';
 import type { NarrativeGraphStore } from '../narrative/graph.store';
 import type { StageContext, StageHandler, StageOutput } from '../pipeline/stage';
+import type { StyleBibleRepository } from '../style/style-bible.repository';
 import { characterNames, type CastService } from './cast.service';
 import type { CharacterStateStore } from './cast.store';
 import { outlineContextOf } from './outline.service';
@@ -62,6 +72,19 @@ export const CastStageRequest = z.strictObject({
   identityFloor: z.number().min(0).max(1).default(0.82),
   /** Cap on how many characters one run of this stage writes sheets for. */
   limit: z.number().int().positive().max(32).default(32),
+  /**
+   * Which style bible to derive appearances from.
+   *
+   * A reference, resolved here, rather than the document itself arriving in the run
+   * payload. Everything else this stage needs works that way already - the outline comes
+   * from `StoryStore` by series id - and the style was the one exception.
+   *
+   * Being the exception had a cost: `payload.style` meant a *request* to S1 and a whole
+   * *`StyleBible`* to S3, one key with two shapes, so a run of `['style', 'cast']` could
+   * never satisfy both and no test ran the two together to notice. Optional because a
+   * caller may omit it and let the run's own project supply it.
+   */
+  styleBibleId: StyleBibleId.optional(),
 });
 export type CastStageRequest = z.infer<typeof CastStageRequest>;
 
@@ -70,6 +93,8 @@ export interface CastStageHandlerDeps extends StageSpendDeps {
   readonly story: StoryStore;
   readonly states: CharacterStateStore;
   readonly graph: NarrativeGraphStore;
+  readonly styleBibles: StyleBibleRepository;
+  readonly projects: ProjectRepository;
   readonly engine: (logger: Logger) => StoryEngineDeps;
   /** `provider:model` a generate on the grid would run on, for the estimate line. */
   readonly imageModel: string | null;
@@ -99,20 +124,8 @@ export class CastStageHandler implements StageHandler {
       );
     }
 
-    const style = StyleBible.safeParse(context.job.payload.style);
-    if (!style.success) {
-      return err(
-        new ValidationError({
-          message:
-            'S3 cast derives every appearance from the locked style bible - S1 must run first',
-          context: {
-            reason: 'cast-without-style',
-            owner: '@rv/style-engine',
-            issues: style.error.issues.map((issue) => issue.path.map(String).join('.')),
-          },
-        }),
-      );
-    }
+    const style = await this.#resolveStyle(context, request.data.styleBibleId ?? null);
+    if (isErr(style)) return style;
 
     const document = await this.#deps.story.load(seriesId);
     if (isErr(document)) return document;
@@ -144,7 +157,7 @@ export class CastStageHandler implements StageHandler {
           { context, engine, logger, seriesId, signal },
           candidates,
           outlineContextOf(stored),
-          style.data,
+          style.value,
           request.data,
         ),
     );
@@ -239,6 +252,54 @@ export class CastStageHandler implements StageHandler {
       detail: `${String(written)} sheet(s) written, ${String(skipped)} already in the graph`,
     });
     return ok({ value: { artifacts }, traces });
+  }
+
+  /**
+   * The locked style bible this run derives appearances from.
+   *
+   * Three places can name it, and the order is deliberate: the stage request wins,
+   * because a caller who named one meant it; then the project, because a run belongs to
+   * one and a project holds its locked style. Anything else is a run that cannot know
+   * what its characters should look like, and saying so is better than picking.
+   *
+   * The same `assertUsableForGeneration` that guards every image generation downstream
+   * runs here too, deliberately early. A cast written against an unlocked style produces
+   * appearances whose checksum nothing can generate against - a failure three stages
+   * later, about a decision made at this one. It also catches a bible edited after
+   * locking, which an `isLocked` check alone would wave through.
+   */
+  async #resolveStyle(
+    context: StageContext,
+    requested: StyleBibleId | null,
+  ): Promise<Result<StyleBible, AppError>> {
+    const fromProject =
+      requested === null ? await this.#deps.projects.findById(context.run.projectId) : null;
+    if (fromProject !== null && isErr(fromProject)) return fromProject;
+
+    const id = requested ?? fromProject?.value?.styleBibleId ?? null;
+    if (id === null) {
+      return err(
+        new ValidationError({
+          message:
+            'S3 cast derives every appearance from a locked style bible, and this run names none - ' +
+            'pass `cast.styleBibleId`, or lock one on the project first',
+          context: {
+            reason: 'cast-without-style',
+            owner: '@rv/style-engine',
+            runId: context.run.id,
+          },
+        }),
+      );
+    }
+
+    const found = await this.#deps.styleBibles.find(id);
+    if (isErr(found)) return found;
+    if (found.value === null) {
+      return err(new NotFoundError('style bible', id));
+    }
+    const usable = assertUsableForGeneration(found.value);
+    if (isErr(usable)) return usable;
+    return ok(found.value);
   }
 }
 

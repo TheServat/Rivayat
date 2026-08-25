@@ -1080,6 +1080,8 @@ export class AppModule {
             STYLE_STAGE_HANDLER,
             PRODUCE_STAGE_HANDLER,
             SEQUENCE_STAGE_HANDLER,
+            STYLE_BIBLE_REPOSITORY,
+            PROJECT_REPOSITORY,
           ],
           useFactory: (
             resolve: ResolveAssetDemandUseCase,
@@ -1103,6 +1105,8 @@ export class AppModule {
             style: StyleStageHandler,
             produce: ProduceStageHandler,
             sequence: SequenceStageHandler,
+            styleBibles: StyleBibleRepository,
+            projects: ProjectRepository,
           ): StageRegistry =>
             buildStageRegistry(
               stageHandlers(
@@ -1132,6 +1136,8 @@ export class AppModule {
                     story: storyStore,
                     states,
                     graph,
+                    styleBibles,
+                    projects,
                     engine: (scoped: Logger) => engines.create(scoped),
                     // The model a generate on the state grid would run on, recorded on
                     // the grid so the screen can show an estimate line without knowing

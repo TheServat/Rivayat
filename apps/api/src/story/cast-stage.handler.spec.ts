@@ -17,7 +17,9 @@ import { FixedClock, MemoryLogger, isErr, toIso } from '@rv/shared-kernel';
 import { DEMO_CHARACTERS } from '../infrastructure/seed/demo-characters';
 import { NarrativeGraphStore } from '../narrative/graph.store';
 import {
+  FakeProjectRepository,
   FakeStructuredBackend,
+  FakeStyleBibleRepository,
   RecordingMeter,
   RefusingMeter,
   TEST_INSTANT,
@@ -127,16 +129,19 @@ const STATES = {
   wardrobe: ['everyday', 'mourning'].map(wardrobe),
 };
 
-function lockedStyle(): StyleBible {
-  const preset = findPreset('paper-cutout');
+/**
+ * A locked bible, by default the paper-cutout preset.
+ *
+ * The id is a parameter because a test about *which* style resolved needs two bibles
+ * that are actually two - the same hardcoded id put both in one map slot, which made an
+ * earlier version of that test assert nothing at all.
+ */
+function lockedStyle(presetId = 'paper-cutout', id = 'sty_01JQZK3M7X8YB4N2VTC6WPHRDC'): StyleBible {
+  const preset = findPreset(presetId);
   if (isErr(preset)) throw preset.error;
   const clock = new FixedClock(TEST_INSTANT);
   const locked = lock(
-    materialiseStyleBible({
-      draft: preset.value.draft,
-      id: 'sty_01JQZK3M7X8YB4N2VTC6WPHRDC',
-      clock,
-    }),
+    materialiseStyleBible({ draft: preset.value.draft, id, clock }),
     toIso(TEST_INSTANT),
   );
   if (isErr(locked)) throw locked.error;
@@ -176,12 +181,18 @@ describe('CastStageHandler', () => {
   function handler(
     backend: FakeStructuredBackend,
     meter: RecordingMeter | RefusingMeter = new RecordingMeter(),
+    overrides: {
+      readonly styleBibles?: FakeStyleBibleRepository;
+      readonly projects?: FakeProjectRepository;
+    } = {},
   ): CastStageHandler {
     return new CastStageHandler({
       cast: new CastService({ ids: new Ids() }),
       story,
       states,
       graph,
+      styleBibles: overrides.styleBibles ?? new FakeStyleBibleRepository([style]),
+      projects: overrides.projects ?? new FakeProjectRepository(style.id),
       engine: () => fakeEngine(backend, testClock()),
       imageModel: 'gemini:gemini-3-flash-image',
       meter,
@@ -192,7 +203,10 @@ describe('CastStageHandler', () => {
 
   it('writes a sheet and a full grid, not three expressions and one outfit', async () => {
     const backend = new FakeStructuredBackend([CORE, VISUAL, STATES]);
-    const { context } = stageContext({ seriesId: SERIES, payload: { style } });
+    const { context } = stageContext({
+      seriesId: SERIES,
+      payload: { cast: { styleBibleId: style.id } },
+    });
 
     const outcome = await handler(backend).execute(context);
 
@@ -224,7 +238,10 @@ describe('CastStageHandler', () => {
 
   it('gives every cell an editable prompt that already carries the style clause', async () => {
     const backend = new FakeStructuredBackend([CORE, VISUAL, STATES]);
-    const { context } = stageContext({ seriesId: SERIES, payload: { style } });
+    const { context } = stageContext({
+      seriesId: SERIES,
+      payload: { cast: { styleBibleId: style.id } },
+    });
 
     await handler(backend).execute(context);
 
@@ -247,9 +264,13 @@ describe('CastStageHandler', () => {
 
   it('refuses without a locked style rather than keying artwork to a moving checksum', async () => {
     const backend = new FakeStructuredBackend([CORE]);
+    // An empty payload no longer means "no style" - the project supplies one - so the
+    // project has to be the one with none for this to still test what it is named for.
     const { context } = stageContext({ seriesId: SERIES, payload: {} });
 
-    const outcome = await handler(backend).execute(context);
+    const outcome = await handler(backend, new RecordingMeter(), {
+      projects: new FakeProjectRepository(null),
+    }).execute(context);
 
     expect(isErr(outcome)).toBe(true);
     if (!isErr(outcome)) return;
@@ -263,7 +284,10 @@ describe('CastStageHandler', () => {
   it('refuses without the shortlist S2 produces, naming the package that owes it', async () => {
     await story.save(emptyStoryDocument(SERIES));
     const backend = new FakeStructuredBackend([CORE]);
-    const { context } = stageContext({ seriesId: SERIES, payload: { style } });
+    const { context } = stageContext({
+      seriesId: SERIES,
+      payload: { cast: { styleBibleId: style.id } },
+    });
 
     const outcome = await handler(backend).execute(context);
 
@@ -274,7 +298,10 @@ describe('CastStageHandler', () => {
 
   it('keeps a character that already exists rather than rewriting an edited grid', async () => {
     const first = new FakeStructuredBackend([CORE, VISUAL, STATES]);
-    const { context } = stageContext({ seriesId: SERIES, payload: { style } });
+    const { context } = stageContext({
+      seriesId: SERIES,
+      payload: { cast: { styleBibleId: style.id } },
+    });
     await handler(first).execute(context);
 
     const second = new FakeStructuredBackend([CORE, VISUAL, STATES]);
@@ -290,7 +317,10 @@ describe('CastStageHandler', () => {
 
   it('spends nothing when the guard refuses', async () => {
     const backend = new FakeStructuredBackend([CORE, VISUAL, STATES]);
-    const { context } = stageContext({ seriesId: SERIES, payload: { style } });
+    const { context } = stageContext({
+      seriesId: SERIES,
+      payload: { cast: { styleBibleId: style.id } },
+    });
 
     const outcome = await handler(backend, new RefusingMeter()).execute(context);
 
@@ -298,5 +328,168 @@ describe('CastStageHandler', () => {
     if (!isErr(outcome)) return;
     expect(outcome.error.kind).toBe('budget');
     expect(backend.requests).toHaveLength(0);
+  });
+});
+
+/**
+ * How S3 finds the style it derives every appearance from.
+ *
+ * These exist because the thing they cover shipped broken and nothing noticed. The run
+ * payload's `style` key meant a *request* to S1 (`{styleBibleId, probe, lock}`) and a
+ * whole *`StyleBible`* to S3 - one key, two shapes - so `['style', 'cast']` could not
+ * satisfy both. No test ran the two stages together, and each stage's own tests passed,
+ * which is exactly the shape of a defect that survives a green suite.
+ */
+describe('CastStageHandler resolving its style', () => {
+  let workspace: ReturnType<typeof scratchWorkspace>;
+  let handle: DatabaseHandle;
+  let story: StoryStore;
+  let states: CharacterStateStore;
+  let graph: NarrativeGraphStore;
+  let style: StyleBible;
+
+  beforeEach(async () => {
+    workspace = scratchWorkspace();
+    const opened = createDatabase(':memory:');
+    if (isErr(opened)) throw opened.error;
+    handle = opened.value;
+    story = new StoryStore({ workspaceDir: workspace.dir, logger: new MemoryLogger() });
+    states = new CharacterStateStore({ workspaceDir: workspace.dir, logger: new MemoryLogger() });
+    graph = new NarrativeGraphStore({ database: handle, logger: new MemoryLogger() });
+    style = lockedStyle();
+    await story.save({
+      ...emptyStoryDocument(SERIES),
+      context: CONTEXT,
+      castCandidates: [CANDIDATE],
+    });
+  });
+
+  afterEach(() => {
+    handle.sqlite.close();
+    workspace.cleanup();
+  });
+
+  function build(deps: {
+    readonly styleBibles: FakeStyleBibleRepository;
+    readonly projects: FakeProjectRepository;
+  }): CastStageHandler {
+    return buildWith(new FakeStructuredBackend([CORE, VISUAL, STATES]), deps);
+  }
+
+  function buildWith(
+    backend: FakeStructuredBackend,
+    deps: {
+      readonly styleBibles: FakeStyleBibleRepository;
+      readonly projects: FakeProjectRepository;
+    },
+  ): CastStageHandler {
+    return new CastStageHandler({
+      cast: new CastService({ ids: new Ids() }),
+      story,
+      states,
+      graph,
+      styleBibles: deps.styleBibles,
+      projects: deps.projects,
+      engine: () => fakeEngine(backend, testClock()),
+      imageModel: 'gemini:gemini-3-flash-image',
+      meter: new RecordingMeter(),
+      router: fakeRouter,
+      logger: new MemoryLogger(),
+    });
+  }
+
+  it('inherits the project style when the run names none', async () => {
+    const handler = build({
+      styleBibles: new FakeStyleBibleRepository([style]),
+      projects: new FakeProjectRepository(style.id),
+    });
+    const { context } = stageContext({ seriesId: SERIES, payload: { cast: {} } });
+
+    const outcome = await handler.execute(context);
+
+    expect(isErr(outcome)).toBe(false);
+    if (isErr(outcome)) return;
+    // A sheet reached the graph, which is only possible if a style resolved.
+    expect(outcome.value.artifacts.some((a) => a.startsWith('character-sheet:'))).toBe(true);
+    const stored = graph.load(SERIES);
+    if (isErr(stored)) return;
+    expect(stored.value.entities.some((e) => e.kind === 'character')).toBe(true);
+  });
+
+  it('prefers the style the run names over the project default', async () => {
+    // Two bibles that differ in the medium a person would see. The project points at the
+    // one the run does not want, so a resolver reading the project first still succeeds -
+    // it just produces a cast in the wrong style. Asserting on the outcome would miss it
+    // entirely, so this asserts on what actually reached the model.
+    const other = lockedStyle('watercolour', 'sty_01JQZK3M7X8YB4N2VTC6WPHRDD');
+    expect(other.visual.medium).not.toBe(style.visual.medium);
+
+    const backend = new FakeStructuredBackend([CORE, VISUAL, STATES]);
+    const handler = buildWith(backend, {
+      styleBibles: new FakeStyleBibleRepository([style, other]),
+      projects: new FakeProjectRepository(other.id),
+    });
+    const { context } = stageContext({
+      seriesId: SERIES,
+      payload: { cast: { styleBibleId: style.id } },
+    });
+
+    const outcome = await handler.execute(context);
+
+    expect(isErr(outcome)).toBe(false);
+    const sent = JSON.stringify(backend.requests);
+    expect(sent).toContain(style.visual.medium);
+    expect(sent).not.toContain(other.visual.medium);
+  });
+
+  it('refuses a style id that resolves to nothing', async () => {
+    const handler = build({
+      styleBibles: new FakeStyleBibleRepository([]),
+      projects: new FakeProjectRepository(null),
+    });
+    const { context } = stageContext({
+      seriesId: SERIES,
+      payload: { cast: { styleBibleId: style.id } },
+    });
+
+    const outcome = await handler.execute(context);
+
+    expect(isErr(outcome)).toBe(true);
+    if (!isErr(outcome)) return;
+    expect(outcome.error.code).toBe('NOT_FOUND');
+  });
+
+  it('refuses an unlocked style rather than generating against one', async () => {
+    // The failure this prevents happens three stages later: every image generation calls
+    // `assertUsableForGeneration`, so a cast derived from an unlocked bible produces
+    // appearances nothing can then generate. Failing here names the decision that caused it.
+    const unlocked = { ...style, lockedAt: null };
+    const handler = build({
+      styleBibles: new FakeStyleBibleRepository([unlocked]),
+      projects: new FakeProjectRepository(unlocked.id),
+    });
+    const { context } = stageContext({ seriesId: SERIES, payload: { cast: {} } });
+
+    const outcome = await handler.execute(context);
+
+    expect(isErr(outcome)).toBe(true);
+    if (!isErr(outcome)) return;
+    expect(outcome.error.code).toBe('VALIDATION_FAILED');
+  });
+
+  it('refuses a style edited after it was locked', async () => {
+    // A checksum that no longer matches its content means something changed a frozen
+    // style behind our back. `isLocked` alone would wave this through. The seed is
+    // checksummed because it decides every image; `notes` is not, because it decides none.
+    const tampered = { ...style, seed: style.seed + 1 };
+    const handler = build({
+      styleBibles: new FakeStyleBibleRepository([tampered]),
+      projects: new FakeProjectRepository(tampered.id),
+    });
+    const { context } = stageContext({ seriesId: SERIES, payload: { cast: {} } });
+
+    const outcome = await handler.execute(context);
+
+    expect(isErr(outcome)).toBe(true);
   });
 });

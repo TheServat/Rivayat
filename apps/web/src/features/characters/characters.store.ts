@@ -540,19 +540,18 @@ export const useCharactersStore = defineStore('characters', (): CharactersStore 
       const run = await useStudioApi().startRun({
         projectId: project,
         seriesId: series,
-        // `style` comes with it, and not as a precaution. S3 derives every appearance
-        // from the locked style bible and refuses without one - its own error says "S1
-        // must run first". Asking for `cast` alone produced a run that failed in three
-        // milliseconds, which is the pipeline being right and the caller being wrong.
-        stages: ['style', 'cast'],
+        // Just the stage the button names. S3 used to refuse without a bible in the run
+        // payload, so this asked for `['style', 'cast']` to put one there - re-running an
+        // already-approved style purely to hand its output forward. S3 now resolves the
+        // bible by id, the way it always resolved the outline, so the detour is gone.
+        stages: ['cast'],
         seed,
         budgetNanoUsd: null,
         payload: {
-          // S1 needs the bible named. The project already has a locked one, so this is a
-          // *use*, not a re-authoring: `probe: false` because a style already approved
-          // should not redraw its four tiles, and `lock: false` because it is locked.
-          style: { styleBibleId: styleBibleId.value, probe: false, lock: false },
-          cast: {},
+          // Named rather than inherited from the project. Both work, but a run that
+          // records which style it used can be read a year later without also having to
+          // know what the project pointed at that day.
+          cast: { styleBibleId: styleBibleId.value },
         },
       });
       castRunId.value = run.id;

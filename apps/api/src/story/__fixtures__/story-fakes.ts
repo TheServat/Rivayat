@@ -14,7 +14,15 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { Ids, type ProjectId, type RunId, type SeriesId } from '@rv/contracts';
+import {
+  Ids,
+  Project,
+  type ProjectId,
+  type RunId,
+  type SeriesId,
+  type StyleBible,
+  type StyleBibleId,
+} from '@rv/contracts';
 import type { ResolvedRoute } from '@rv/providers';
 import type { CompletionRequest, CompletionResponse, StructuredBackend } from '@rv/prompt-kit';
 import { StructuredCall } from '@rv/prompt-kit';
@@ -34,9 +42,13 @@ import {
   type AppError,
   type Clock,
   type Result,
+  type Unit,
+  UNIT,
 } from '@rv/shared-kernel';
 
+import type { ProjectPatch, ProjectRepository } from '../../application/ports/repository.ports';
 import type { RunSummary } from '../../application/resources';
+import type { StyleBibleRepository } from '../../style/style-bible.repository';
 import type { MeteredCallSpec, MeteredOutcome } from '../../cost/metered-call';
 import type { StageMeter, StageRouter } from '../stage-spend';
 import type { StageContext, StageProgress } from '../../pipeline/stage';
@@ -249,5 +261,83 @@ export class RefusingMeter implements StageMeter {
   ): Promise<Result<T, AppError>> {
     this.calls += 1;
     return Promise.resolve(err(new BudgetExceededError('run', 0.01, 0.5)));
+  }
+}
+
+// ── the two repositories S3 resolves its style through ───────────────────────
+
+/**
+ * A style bible repository backed by a map.
+ *
+ * S3 resolves the bible it derives appearances from rather than being handed one, so a
+ * test of S3 needs somewhere for that bible to live. Standing up the real SQLite-backed
+ * repository would test the repository, which has its own tests.
+ */
+export class FakeStyleBibleRepository implements StyleBibleRepository {
+  readonly #byId = new Map<StyleBibleId, StyleBible>();
+
+  constructor(bibles: readonly StyleBible[] = []) {
+    for (const bible of bibles) this.#byId.set(bible.id, bible);
+  }
+
+  find(id: StyleBibleId): Promise<Result<StyleBible | null, AppError>> {
+    return Promise.resolve(ok(this.#byId.get(id) ?? null));
+  }
+
+  save(bible: StyleBible): Promise<Result<Unit, AppError>> {
+    this.#byId.set(bible.id, bible);
+    return Promise.resolve(ok(UNIT));
+  }
+
+  list(limit: number): Promise<Result<readonly StyleBible[], AppError>> {
+    return Promise.resolve(ok([...this.#byId.values()].slice(0, limit)));
+  }
+}
+
+/**
+ * A project repository holding one project, whose style a run can inherit.
+ *
+ * `styleBibleId` defaults to null because that is a project's real starting state - one
+ * that has not locked a style yet - and a stage asked to work for it should say so
+ * rather than invent one.
+ */
+export class FakeProjectRepository implements ProjectRepository {
+  #project: Project;
+
+  constructor(styleBibleId: StyleBibleId | null = null) {
+    this.#project = Project.parse({
+      id: PROJECT_ID,
+      name: 'Test project',
+      description: 'A project a stage can resolve a style through.',
+      locale: 'en',
+      styleBibleId,
+      budgetNanoUsd: null,
+      createdAt: toIso(TEST_INSTANT),
+      updatedAt: toIso(TEST_INSTANT),
+    });
+  }
+
+  create(project: Project): Promise<Result<Project>> {
+    this.#project = project;
+    return Promise.resolve(ok(project));
+  }
+
+  findById(id: ProjectId): Promise<Result<Project | null>> {
+    return Promise.resolve(ok(id === this.#project.id ? this.#project : null));
+  }
+
+  list(): Promise<Result<readonly Project[]>> {
+    return Promise.resolve(ok([this.#project]));
+  }
+
+  update(_id: ProjectId, patch: ProjectPatch): Promise<Result<Project>> {
+    // Spreading the patch whole would write `undefined` over a set field, because an
+    // absent key and a key holding `undefined` are the same spread and not the same
+    // patch. `exactOptionalPropertyTypes` is what makes the compiler say so.
+    const defined = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined),
+    );
+    this.#project = Project.parse({ ...this.#project, ...defined });
+    return Promise.resolve(ok(this.#project));
   }
 }
